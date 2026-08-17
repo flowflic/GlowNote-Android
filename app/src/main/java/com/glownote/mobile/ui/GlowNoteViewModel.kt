@@ -3,7 +3,11 @@ package com.glownote.mobile.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.glownote.mobile.BuildConfig
 import com.glownote.mobile.data.AppSettings
+import com.glownote.mobile.data.AppInstallResult
+import com.glownote.mobile.data.AppUpdateClient
+import com.glownote.mobile.data.AppUpdateState
 import com.glownote.mobile.data.ArticleGroup
 import com.glownote.mobile.data.BrowserBookmark
 import com.glownote.mobile.data.BrowserHistoryEntry
@@ -86,6 +90,7 @@ data class GlowNoteUiState(
     val selectedArticleKey: String? = null,
     val draft: AnnotationDraft? = null,
     val isSyncing: Boolean = false,
+    val appUpdate: AppUpdateState = AppUpdateState(),
     val status: String = "",
     val statusIsError: Boolean = false,
 )
@@ -95,6 +100,7 @@ class GlowNoteViewModel(application: Application) : AndroidViewModel(application
         store = LocalStore(application.applicationContext),
         webDav = WebDavClient(),
     )
+    private val appUpdateClient = AppUpdateClient()
     private val _ui = MutableStateFlow(GlowNoteUiState())
     val ui: StateFlow<GlowNoteUiState> = _ui.asStateFlow()
     private var syncJob: Job? = null
@@ -569,6 +575,104 @@ class GlowNoteViewModel(application: Application) : AndroidViewModel(application
                 _ui.update { it.copy(settings = next, status = "设置已保存", statusIsError = false) }
                 if (next.webdav.enabled) syncNow()
             }.onFailure { error -> setStatus(error.message ?: "保存设置失败", true) }
+        }
+    }
+
+    fun checkForAppUpdate() {
+        val current = _ui.value.appUpdate
+        if (current.isChecking || current.isDownloading) return
+        _ui.update {
+            it.copy(
+                appUpdate = current.copy(
+                    isChecking = true,
+                    latest = null,
+                    message = "正在检查更新…",
+                    statusIsError = false,
+                ),
+            )
+        }
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    appUpdateClient.checkForUpdate(BuildConfig.VERSION_NAME)
+                }
+            }.onSuccess { latest ->
+                _ui.update {
+                    it.copy(
+                        appUpdate = AppUpdateState(
+                            latest = latest,
+                            message = latest?.let { info -> "发现新版本 v${info.versionName}" } ?: "当前已是最新版本",
+                        ),
+                    )
+                }
+            }.onFailure { error ->
+                _ui.update {
+                    it.copy(
+                        appUpdate = AppUpdateState(
+                            message = error.message ?: "检查更新失败",
+                            statusIsError = true,
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    fun installAppUpdate() {
+        val info = _ui.value.appUpdate.latest ?: return setStatus("请先检查更新", true)
+        if (_ui.value.appUpdate.isDownloading) return
+        _ui.update {
+            it.copy(
+                appUpdate = it.appUpdate.copy(
+                    isDownloading = true,
+                    message = "正在下载 v${info.versionName}…",
+                    statusIsError = false,
+                ),
+            )
+        }
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    appUpdateClient.downloadApk(info, getApplication<Application>().cacheDir)
+                }
+            }.onSuccess { apkFile ->
+                runCatching {
+                    appUpdateClient.launchInstaller(getApplication(), apkFile)
+                }.onSuccess { result ->
+                    val message = when (result) {
+                        AppInstallResult.LAUNCHED_INSTALLER -> "已打开系统安装器"
+                        AppInstallResult.PERMISSION_REQUIRED -> "请允许 GlowNote 安装未知应用后，再点击安装"
+                    }
+                    _ui.update {
+                        it.copy(
+                            appUpdate = it.appUpdate.copy(
+                                isDownloading = false,
+                                message = message,
+                            ),
+                        )
+                    }
+                }.onFailure { error ->
+                    _ui.update {
+                        it.copy(
+                            appUpdate = it.appUpdate.copy(
+                                isDownloading = false,
+                                message = error.message ?: "无法打开安装器",
+                                statusIsError = true,
+                            ),
+                        )
+                    }
+                }
+            }.onFailure { error ->
+                _ui.update {
+                    it.copy(
+                        appUpdate = it.appUpdate.copy(
+                            isDownloading = false,
+                            message = error.message ?: "下载更新失败",
+                            statusIsError = true,
+                        ),
+                    )
+                }
+            }
         }
     }
 
