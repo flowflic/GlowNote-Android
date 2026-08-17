@@ -26,6 +26,7 @@ import android.webkit.WebViewClient
 import android.widget.Toast
 import org.json.JSONObject
 import java.util.IdentityHashMap
+import com.glownote.mobile.BuildConfig
 import com.glownote.mobile.data.browserDeepLinkToWebUrl
 import com.glownote.mobile.data.normalizeWebUrl
 import androidx.activity.compose.BackHandler
@@ -3411,6 +3412,10 @@ private fun SettingsScreen(state: GlowNoteUiState, viewModel: GlowNoteViewModel)
     var password by remember(state.settings) { mutableStateOf(state.settings.webdav.password) }
     var path by remember(state.settings) { mutableStateOf(state.settings.webdav.path) }
 
+    LaunchedEffect(Unit) {
+        viewModel.checkForAppUpdate()
+    }
+
     val draftSettings = {
         AppSettings(
             webdav = WebDavSettings(
@@ -3433,6 +3438,56 @@ private fun SettingsScreen(state: GlowNoteUiState, viewModel: GlowNoteViewModel)
         Spacer(Modifier.height(7.dp))
         Text("和桌面 GlowNote 共享文章、高亮与批注。密码会保存在 Android Keystore 加密区。", color = Muted, fontSize = 13.sp)
         Spacer(Modifier.height(20.dp))
+
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Paper),
+            border = BorderStroke(1.dp, Color(0xFFE6DED1)),
+            shape = RoundedCornerShape(22.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(Modifier.padding(17.dp)) {
+                Text("应用更新", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                Spacer(Modifier.height(3.dp))
+                Text("当前版本 v${BuildConfig.VERSION_NAME} · 更新源 GitHub Releases", color = Muted, fontSize = 12.sp)
+                Spacer(Modifier.height(13.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(9.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(
+                        onClick = viewModel::checkForAppUpdate,
+                        enabled = !state.appUpdate.isChecking && !state.appUpdate.isDownloading,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(17.dp))
+                        Spacer(Modifier.width(5.dp))
+                        Text(if (state.appUpdate.isChecking) "检查中…" else "检查更新")
+                    }
+                    if (state.appUpdate.latest != null) {
+                        Button(
+                            onClick = viewModel::installAppUpdate,
+                            enabled = !state.appUpdate.isDownloading,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Icon(Icons.Default.OpenInNew, contentDescription = null, modifier = Modifier.size(17.dp))
+                            Spacer(Modifier.width(5.dp))
+                            Text(if (state.appUpdate.isDownloading) "下载中…" else "安装更新")
+                        }
+                    }
+                }
+                state.appUpdate.latest?.let { latest ->
+                    Spacer(Modifier.height(9.dp))
+                    Text("发现 v${latest.versionName} · ${latest.assetName}", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
+                }
+                if (state.appUpdate.message.isNotBlank()) {
+                    Spacer(Modifier.height(7.dp))
+                    Text(
+                        state.appUpdate.message,
+                        color = if (state.appUpdate.statusIsError) Color(0xFFB3261E) else Muted,
+                        fontSize = 12.sp,
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(15.dp))
 
         Card(
             colors = CardDefaults.cardColors(containerColor = Paper),

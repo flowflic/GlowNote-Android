@@ -49,6 +49,15 @@ class AnnotationScriptTest {
         val script = AnnotationScript.toggleReaderMode
 
         assertTrue(script.contains("#glownote-reader-root h1{margin:0 0 8px!important;font-size:clamp(28px,9vw,54px)"))
-        assertTrue(script.contains("#glownote-reader-root p,#glownote-reader-root li{margin:0 0 1.1em!important;line-height:var(--glownote-reader-line-height,1.8)"))
+        assertTrue(script.contains("#glownote-reader-content p,#glownote-reader-content li{margin:0 0 1.1em!important;font-size:var(--glownote-reader-font-size,18px)!important;line-height:var(--glownote-reader-line-height,1.8)"))
+    }
+
+    @Test
+    fun readerFontSizeOverridesPageParagraphStyles() {
+        val script = AnnotationScript.toggleReaderMode
+
+        assertTrue(script.contains("#glownote-reader-content{font-size:var(--glownote-reader-font-size,18px)!important;"))
+        assertTrue(script.contains("#glownote-reader-content p,#glownote-reader-content li{"))
+        assertTrue(script.contains("font-size:var(--glownote-reader-font-size,18px)!important"))
     }
 }

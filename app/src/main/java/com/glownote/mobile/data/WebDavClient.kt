@@ -140,7 +140,7 @@ class WebDavClient(
             val requestBuilder = Request.Builder().url(current).method("MKCOL", null)
             authenticated(requestBuilder, settings)
             execute(requestBuilder.build()).use { response ->
-                if (response.code != 201 && response.code != 405 && response.code != 301) {
+                if (!isMkcolSuccessStatus(response.code)) {
                     error("WebDAV MKCOL failed: ${response.code}")
                 }
             }
@@ -179,3 +179,6 @@ class WebDavClient(
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
 }
+
+internal fun isMkcolSuccessStatus(code: Int): Boolean =
+    code == 200 || code == 201 || code == 204 || code == 301 || code == 405
