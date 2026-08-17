@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
+  <title id="title">GlowNote App 图标三套候选</title>
+  <desc id="desc">暖金书页、蓝墨光标、珊瑚荧光三套 Android App 图标方案，仅供选型，不替换现有图标。</desc>
+  <defs>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F9D77A"/>
+      <stop offset="1" stop-color="#EFAE4D"/>
+    </linearGradient>
+    <linearGradient id="ink" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#253B4B"/>
+      <stop offset="1" stop-color="#10202D"/>
+    </linearGradient>
+    <linearGradient id="coral" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#E95167"/>
+      <stop offset="1" stop-color="#E95167"/>
+    </linearGradient>
+    <filter id="softShadow" x="-30%" y="-30%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="14" stdDeviation="14" flood-color="#17202A" flood-opacity=".18"/>
+    </filter>
+    <filter id="smallGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <style>
+      .ui { font-family: "Noto Sans SC", "Microsoft YaHei", sans-serif; }
+      .title { font-size: 32px; font-weight: 800; fill: #17202A; }
+      .sub { font-size: 15px; fill: #6B6A66; }
+      .name { font-size: 21px; font-weight: 800; text-anchor: middle; fill: #17202A; }
+      .desc { font-size: 13px; text-anchor: middle; fill: #6B6A66; }
+      .glyph-line { fill: none; stroke-linecap: round; stroke-linejoin: round; stroke-width: 7; }
+    </style>
+  </defs>
+
+  <rect width="1200" height="720" fill="#F7F3EC"/>
+  <g class="ui">
+    <text x="60" y="62" class="title">GlowNote App 图标 · 三套候选</text>
+    <text x="60" y="92" class="sub">按 Android 自适应图标安全区设计；B 方案已按选定结果落地。</text>
+
+    <!-- A: warm gold notebook -->
+    <g filter="url(#softShadow)">
+      <rect x="70" y="145" width="320" height="320" rx="72" fill="url(#gold)"/>
+    </g>
+    <g transform="translate(70 145)">
+      <circle cx="160" cy="150" r="98" fill="#FFF8ED" opacity=".16"/>
+      <path d="M91 78h116l28 28v142H91z" fill="#17202A"/>
+      <path d="M207 78v35h28" fill="#F7F3EC" opacity=".82"/>
+      <path d="M116 132h88M116 168h88M116 204h60" class="glyph-line" stroke="#F7F3EC"/>
+      <path d="m196 208 46-46 23 23-46 46-34 11z" fill="#F7F3EC" stroke="#17202A" stroke-width="6" stroke-linejoin="round"/>
+      <path d="m232 172 23 23" class="glyph-line" stroke="#D85C6A" stroke-width="6"/>
+    </g>
+    <text x="230" y="518" class="name">A · 暖金书页</text>
+    <text x="230" y="545" class="desc">温暖、清晰，延续当前品牌基调</text>
+
+    <!-- B: blue ink cursor -->
+    <g filter="url(#softShadow)">
+      <rect x="440" y="145" width="320" height="320" rx="72" fill="url(#ink)"/>
+    </g>
+    <g transform="translate(440 145)">
+      <circle cx="160" cy="160" r="104" fill="#5AE1D3" opacity=".1" filter="url(#smallGlow)"/>
+      <path d="M67 55h176l25 25v194H67z" fill="#F7F3EC"/>
+      <path d="M243 55v25h25" fill="#A8D1E6"/>
+      <path d="M84 112h129M84 157h129M84 202h89" class="glyph-line" stroke="#2B6F88"/>
+      <path d="m151 250 55-77 35 35-53 66-42 14z" fill="#F6C667" stroke="#F7F3EC" stroke-width="5" stroke-linejoin="round"/>
+      <path d="m206 173 35 35-16 18-35-35z" class="glyph-line" stroke="#D85C6A" stroke-width="13"/>
+      <circle cx="249" cy="63" r="7" fill="#5AE1D3"/>
+    </g>
+    <text x="600" y="518" class="name">B · 蓝墨光标</text>
+    <text x="600" y="545" class="desc">深色高对比，启动器中更抓眼</text>
+
+    <!-- C: coral highlight -->
+    <g filter="url(#softShadow)">
+      <rect x="810" y="145" width="320" height="320" rx="72" fill="url(#coral)"/>
+    </g>
+    <g transform="translate(810 145)">
+      <path d="M42 30h190l36 36v254H42z" fill="#FFF9EC"/>
+      <path d="M232 30v36h36" fill="#FFC353"/>
+      <path d="M72 107h133M72 166h133M72 225h92" class="glyph-line" stroke="#151F2B"/>
+      <path d="m151 287 74-103 45 44-72 89-54 18z" fill="#151F2B" stroke="#FFF9EC" stroke-width="6" stroke-linejoin="round"/>
+      <path d="m225 184 45 44-21 24-45-44z" class="glyph-line" stroke="#FFC353" stroke-width="16"/>
+    </g>
+    <text x="970" y="518" class="name">C · 珊瑚荧光</text>
+    <text x="970" y="545" class="desc">更年轻、更醒目，强化高亮记忆点</text>
+
+    <rect x="60" y="610" width="1080" height="1" fill="#E3D9CB"/>
+    <text x="60" y="650" class="sub">B 方案已按选定结果转换为 Android adaptive-icon：深蓝底、浅纸页、蓝墨线、金色光标。</text>
+  </g>
+</svg>
