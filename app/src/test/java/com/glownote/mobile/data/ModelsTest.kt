@@ -123,5 +123,8 @@ class ModelsTest {
         assertEquals(1.8f, sanitized.lineSpacing)
         assertEquals(12, sanitized.pageSpacingDp)
         assertEquals("warm", sanitized.background)
+
+        assertEquals("white", ReaderSettings(background = "almond").sanitized().background)
+        assertEquals("dark", ReaderSettings(background = "gray").sanitized().background)
     }
 }

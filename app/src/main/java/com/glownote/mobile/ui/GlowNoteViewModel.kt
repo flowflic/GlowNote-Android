@@ -28,6 +28,7 @@ import com.glownote.mobile.data.nowIso
 import com.glownote.mobile.data.sanitized
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -104,6 +105,7 @@ class GlowNoteViewModel(application: Application) : AndroidViewModel(application
     private val _ui = MutableStateFlow(GlowNoteUiState())
     val ui: StateFlow<GlowNoteUiState> = _ui.asStateFlow()
     private var syncJob: Job? = null
+    private var readerSettingsStatusJob: Job? = null
     private var lastOpenedWindowUrl: String = ""
     private var lastOpenedWindowAt: Long = 0L
 
@@ -415,17 +417,30 @@ class GlowNoteViewModel(application: Application) : AndroidViewModel(application
     fun saveReaderSettings(next: ReaderSettings) {
         val sanitized = next.sanitized()
         val nextSettings = _ui.value.settings.copy(reader = sanitized)
+        val savedMessage = "阅读设置已保存"
+        readerSettingsStatusJob?.cancel()
         _ui.update {
             it.copy(
                 settings = nextSettings,
-                status = "阅读设置已保存",
+                status = savedMessage,
                 statusIsError = false,
             )
+        }
+        readerSettingsStatusJob = viewModelScope.launch {
+            delay(3_000L)
+            _ui.update { state ->
+                if (state.status == savedMessage && !state.statusIsError) {
+                    state.copy(status = "")
+                } else {
+                    state
+                }
+            }
         }
         viewModelScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) { repository.saveSettings(nextSettings) }
             }.onFailure { error ->
+                readerSettingsStatusJob?.cancel()
                 setStatus(error.message ?: "保存阅读设置失败", true)
             }
         }

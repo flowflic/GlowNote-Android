@@ -5,6 +5,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
@@ -32,6 +33,7 @@ import com.glownote.mobile.data.normalizeWebUrl
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -119,6 +121,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -131,6 +134,8 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -186,6 +191,9 @@ private val HeatmapColors = listOf(
     Color(0xFF1E6FA8),
 )
 
+private const val TAB_PREVIEW_WIDTH_PX = 600
+private const val TAB_PREVIEW_HEIGHT_PX = 760
+
 private enum class BrowserPanel {
     HISTORY,
     BOOKMARKS,
@@ -233,6 +241,13 @@ private fun ChromeBrowserScreen(state: GlowNoteUiState, viewModel: GlowNoteViewM
     val context = LocalContext.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val activeTab = state.browserTabs.firstOrNull { it.id == state.activeBrowserTabId }
+    val tabPreviews = remember { mutableStateMapOf<String, Bitmap>() }
+    LaunchedEffect(state.browserTabs) {
+        val activeIds = state.browserTabs.mapTo(hashSetOf()) { it.id }
+        tabPreviews.keys.toList()
+            .filterNot { it in activeIds }
+            .forEach { tabPreviews.remove(it) }
+    }
     val isNewTab = activeTab?.isNewTab == true
     val activeTabIndex = state.browserTabs.indexOfFirst { it.id == state.activeBrowserTabId }
     val previousTab = when {
@@ -421,6 +436,9 @@ private fun ChromeBrowserScreen(state: GlowNoteUiState, viewModel: GlowNoteViewM
                                         activeWebViewCanGoBack = canGoBack
                                     }
                                 },
+                                onPreviewCaptured = { capturedTabId, preview ->
+                                    tabPreviews[capturedTabId] = preview
+                                },
                             )
                         }
                     }
@@ -465,6 +483,7 @@ private fun ChromeBrowserScreen(state: GlowNoteUiState, viewModel: GlowNoteViewM
         if (showTabOverview) {
             BrowserTabOverview(
                 tabs = state.browserTabs,
+                previews = tabPreviews,
                 activeTabId = state.activeBrowserTabId,
                 onHome = goHome,
                 onNewTab = addTab,
@@ -476,6 +495,7 @@ private fun ChromeBrowserScreen(state: GlowNoteUiState, viewModel: GlowNoteViewM
                 },
                 onClose = { id ->
                     clearPageSelection()
+                    tabPreviews.remove(id)
                     viewModel.closeBrowserTab(id)
                 },
             )
@@ -821,6 +841,7 @@ private fun ChromeIconButton(
 @Composable
 private fun BrowserTabOverview(
     tabs: List<BrowserTab>,
+    previews: Map<String, Bitmap>,
     activeTabId: String,
     onHome: () -> Unit,
     onNewTab: () -> Unit,
@@ -868,14 +889,26 @@ private fun BrowserTabOverview(
                     .padding(horizontal = 14.dp, vertical = 14.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                tabs.forEach { tab ->
-                    BrowserTabCard(
-                        tab = tab,
-                        isActive = tab.id == activeTabId,
-                        canClose = tabs.size > 1,
-                        onSelect = { onSelect(tab.id) },
-                        onClose = { onClose(tab.id) },
-                    )
+                tabs.chunked(2).forEach { rowTabs ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        rowTabs.forEach { tab ->
+                            BrowserTabCard(
+                                modifier = Modifier.weight(1f),
+                                tab = tab,
+                                preview = previews[tab.id],
+                                isActive = tab.id == activeTabId,
+                                canClose = tabs.size > 1,
+                                onSelect = { onSelect(tab.id) },
+                                onClose = { onClose(tab.id) },
+                            )
+                        }
+                        if (rowTabs.size == 1) {
+                            Spacer(Modifier.weight(1f))
+                        }
+                    }
                 }
                 Surface(
                     modifier = Modifier
@@ -903,66 +936,118 @@ private fun BrowserTabOverview(
 
 @Composable
 private fun BrowserTabCard(
+    modifier: Modifier = Modifier,
     tab: BrowserTab,
+    preview: Bitmap?,
     isActive: Boolean,
     canClose: Boolean,
     onSelect: () -> Unit,
     onClose: () -> Unit,
 ) {
     Surface(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
+            .height(278.dp)
             .clip(RoundedCornerShape(18.dp))
             .clickable(onClick = onSelect),
-        color = if (isActive) Color(0xFFE8F0F8) else Paper,
+        color = if (isActive) Color(0xFFE8F0F8) else Color(0xFFE8E8DF),
         border = BorderStroke(
             width = if (isActive) 2.dp else 1.dp,
             color = if (isActive) MaterialTheme.colorScheme.primary else Color(0xFFE2D9CC),
         ),
-        shadowElevation = if (isActive) 2.dp else 0.dp,
+        shadowElevation = 1.dp,
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 14.dp, end = 4.dp, top = 12.dp, bottom = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = tab.title.ifBlank { tab.url.hostForDisplay().ifBlank { "新标签页" } },
-                        color = Ink,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+        Column(Modifier.fillMaxSize()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
+                    .padding(start = 9.dp, end = 3.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Surface(
+                    modifier = Modifier.size(28.dp),
+                    color = if (tab.isNewTab) Color(0xFFDDE7D0) else Color.White,
+                    shape = RoundedCornerShape(9.dp),
+                ) {
+                    Icon(
+                        imageVector = if (tab.isNewTab) Icons.Default.Search else Icons.Default.Language,
+                        contentDescription = null,
+                        tint = if (tab.isNewTab) Color(0xFF4E752A) else Color(0xFF4D5B65),
+                        modifier = Modifier.padding(5.dp),
                     )
-                    if (isActive) {
-                        Spacer(Modifier.width(7.dp))
-                        Surface(color = MaterialTheme.colorScheme.primary, shape = RoundedCornerShape(8.dp)) {
-                            Text(
-                                "当前",
-                                color = Color.White,
-                                fontSize = 10.sp,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
-                            )
-                        }
-                    }
                 }
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.width(8.dp))
                 Text(
-                    text = tab.url.ifBlank { "搜索或输入网址" },
-                    color = Muted,
-                    fontSize = 12.sp,
-                    maxLines = 2,
+                    text = tab.title.ifBlank { tab.url.hostForDisplay().ifBlank { "新标签页" } },
+                    color = Ink,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-            }
-            if (canClose) {
-                IconButton(onClick = onClose, modifier = Modifier.size(40.dp)) {
-                    Icon(Icons.Default.Close, contentDescription = "关闭标签页", tint = Muted, modifier = Modifier.size(19.dp))
+                if (canClose) {
+                    IconButton(onClick = onClose, modifier = Modifier.size(38.dp)) {
+                        Icon(Icons.Default.Close, contentDescription = "关闭标签页", tint = Muted, modifier = Modifier.size(19.dp))
+                    }
                 }
             }
+            when {
+                preview != null -> {
+                    Image(
+                        bitmap = preview.asImageBitmap(),
+                        contentDescription = "${tab.title.ifBlank { "网页" }}网页预览",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .padding(start = 5.dp, end = 5.dp, bottom = 5.dp)
+                            .clip(RoundedCornerShape(14.dp)),
+                        contentScale = ContentScale.Crop,
+                    )
+                }
+
+                tab.isNewTab -> {
+                    TabPreviewPlaceholder(
+                        modifier = Modifier.weight(1f),
+                        icon = Icons.Default.Search,
+                        label = "搜索或输入网址",
+                        tint = Color(0xFF4E752A),
+                    )
+                }
+
+                else -> {
+                    TabPreviewPlaceholder(
+                        modifier = Modifier.weight(1f),
+                        icon = Icons.Default.Language,
+                        label = "正在加载网页预览…",
+                        tint = Color(0xFF4D5B65),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TabPreviewPlaceholder(
+    modifier: Modifier,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    tint: Color,
+) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(start = 5.dp, end = 5.dp, bottom = 5.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color(0xFFF9F8F4)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(28.dp))
+            Spacer(Modifier.height(8.dp))
+            Text(label, color = Muted, fontSize = 12.sp)
         }
     }
 }
@@ -1991,6 +2076,7 @@ private fun ArticleDetailPane(
     var isEditingTitle by remember(article.key) { mutableStateOf(false) }
     var titleDraft by remember(article.key, article.title) { mutableStateOf(article.title) }
     var titleHasFocus by remember(article.key) { mutableStateOf(false) }
+    var shareRecord by remember(article.key) { mutableStateOf<HighlightRecord?>(null) }
     val titleFocusRequester = remember(article.key) { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
 
@@ -2106,6 +2192,7 @@ private fun ArticleDetailPane(
                     onCopy = { copyHighlightText(context, record.selectedText) },
                     onDelete = { viewModel.deleteHighlight(record.id) },
                     onJump = { viewModel.openHighlight(record) },
+                    onShare = { shareRecord = record },
                 )
                 Spacer(Modifier.height(11.dp))
             }
@@ -2148,6 +2235,12 @@ private fun ArticleDetailPane(
                 )
             }
         }
+        shareRecord?.let { record ->
+            ShareCardSheet(
+                record = record,
+                onDismiss = { shareRecord = null },
+            )
+        }
     }
 }
 
@@ -2159,6 +2252,7 @@ private fun SwipeableHighlightCard(
     onCopy: () -> Unit,
     onDelete: () -> Unit,
     onJump: () -> Unit,
+    onShare: () -> Unit,
 ) {
     val cardShape = RoundedCornerShape(18.dp)
     val revealWidth = 112.dp
@@ -2254,6 +2348,17 @@ private fun SwipeableHighlightCard(
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f),
                             )
+                            IconButton(
+                                onClick = onShare,
+                                modifier = Modifier.size(38.dp),
+                            ) {
+                                Icon(
+                                    Icons.Default.Share,
+                                    contentDescription = "分享摘录",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
                             IconButton(
                                 onClick = onJump,
                                 modifier = Modifier
@@ -2677,6 +2782,35 @@ private fun BrowserScreen(state: GlowNoteUiState, viewModel: GlowNoteViewModel) 
     }
 }
 
+private fun captureWebPreview(view: WebView): Bitmap? {
+    val sourceWidth = view.width
+    val sourceHeight = view.height
+    if (!view.isAttachedToWindow || sourceWidth <= 0 || sourceHeight <= 0 || view.url.isNullOrBlank()) {
+        return null
+    }
+    val scale = TAB_PREVIEW_WIDTH_PX.toFloat() / sourceWidth.toFloat()
+    val capturedSourceHeight = minOf(
+        sourceHeight,
+        (TAB_PREVIEW_HEIGHT_PX.toFloat() / scale).roundToInt(),
+    )
+    val targetHeight = (capturedSourceHeight * scale).roundToInt().coerceAtLeast(1)
+    return runCatching {
+        Bitmap.createBitmap(
+            TAB_PREVIEW_WIDTH_PX,
+            targetHeight,
+            Bitmap.Config.ARGB_8888,
+        ).also { bitmap ->
+            val canvas = Canvas(bitmap)
+            canvas.drawColor(0xFFFFFFFF.toInt())
+            canvas.save()
+            canvas.scale(scale, scale)
+            canvas.clipRect(0f, 0f, sourceWidth.toFloat(), capturedSourceHeight.toFloat())
+            view.draw(canvas)
+            canvas.restore()
+        }
+    }.getOrNull()
+}
+
 @Composable
 private fun WebPageView(
     tabId: String,
@@ -2697,6 +2831,7 @@ private fun WebPageView(
     onPageTap: () -> Unit,
     onOpenNewWindow: (String) -> Unit,
     onNavigationStateChanged: (String, Boolean) -> Unit,
+    onPreviewCaptured: (String, Bitmap) -> Unit = { _, _ -> },
 ) {
     val latestSelection = rememberUpdatedState(onSelection)
     val latestHighlightClick = rememberUpdatedState(onHighlightClick)
@@ -2709,6 +2844,7 @@ private fun WebPageView(
     val latestReaderSettingsChanged = rememberUpdatedState(onReaderSettingsChanged)
     val latestOpenNewWindow = rememberUpdatedState(onOpenNewWindow)
     val latestNavigationStateChanged = rememberUpdatedState(onNavigationStateChanged)
+    val latestPreviewCaptured = rememberUpdatedState(onPreviewCaptured)
     var lastClearSelectionRequest by remember { mutableStateOf(clearSelectionRequest) }
     var lastReaderModeRequest by remember { mutableStateOf(readerModeRequest) }
     var lastGoBackRequest by remember { mutableStateOf(goBackRequest) }
@@ -2864,6 +3000,14 @@ private fun WebPageView(
                     "AndroidWebViewBridge",
                 )
                 webViewClient = object : WebViewClient() {
+                    fun schedulePreviewCapture(view: WebView) {
+                        view.postDelayed({
+                            captureWebPreview(view)?.let { preview ->
+                                latestPreviewCaptured.value(tabId, preview)
+                            }
+                        }, 280L)
+                    }
+
                     override fun shouldOverrideUrlLoading(
                         view: WebView,
                         request: WebResourceRequest,
@@ -2922,6 +3066,7 @@ private fun WebPageView(
                         lastAppliedRecords = currentRecords
                         latestNavigationStateChanged.value(tabId, view.canGoBack())
                         latestLoaded.value(tabId, pageUrl, view.title.orEmpty())
+                        schedulePreviewCapture(view)
                     }
 
                     override fun doUpdateVisitedHistory(
@@ -2942,6 +3087,7 @@ private fun WebPageView(
                         // that flag is intentionally true while that restore
                         // is in flight.
                         latestLoaded.value(tabId, pageUrl, view.title.orEmpty())
+                        schedulePreviewCapture(view)
                     }
 
                     override fun onReceivedError(

@@ -33,14 +33,45 @@ class AnnotationScriptTest {
     }
 
     @Test
-    fun readerModeOwnsItsSettingsMenu() {
+    fun readerModePrioritizesCsdnArticleBodyAndInPageTitle() {
         val script = AnnotationScript.toggleReaderMode
+
+        assertTrue(script.contains("function pickMainContent()"))
+        assertTrue(script.contains("#article_content,.article_content"))
+        assertTrue(script.contains("#articleContentId,h1.title-article"))
+        assertTrue(script.contains("csdnArticle.appendChild(csdnContent.cloneNode(true))"))
+    }
+
+    @Test
+    fun readerModeDoesNotCreateDuplicateDocumentTitle() {
+        val script = AnnotationScript.toggleReaderMode
+
+        assertTrue(!script.contains("heading.textContent = document.title"))
+        assertTrue(!script.contains("meta.setAttribute('data-glownote-reader-meta'"))
+        assertTrue(script.contains("content.id = 'glownote-reader-content'"))
+    }
+
+    @Test
+    fun readerModeOwnsItsSettingsMenu() {
+        val script = AnnotationScript.toggleReaderMode + AnnotationScript.bootstrap
 
         assertTrue(script.contains("installReaderSettingsMenu(header)"))
         assertTrue(script.contains("data-glownote-reader-settings-button"))
         assertTrue(script.contains("data-glownote-reader-control=\"fontSizeSp\""))
         assertTrue(script.contains("data-glownote-reader-control=\"lineSpacing\""))
         assertTrue(script.contains("data-glownote-reader-control=\"pageSpacingDp\""))
+        assertTrue(script.contains("data-glownote-reader-control=\"background\""))
+        assertTrue(script.contains("data-glownote-reader-background=\"white\""))
+        assertTrue(script.contains("data-glownote-reader-background=\"warm\""))
+        assertTrue(script.contains("data-glownote-reader-background=\"green\""))
+        assertTrue(script.contains("data-glownote-reader-background=\"dark\""))
+        assertTrue(script.contains("data-glownote-reader-background=\"blue\""))
+        assertTrue(script.contains("glownote-reader-background-swatches"))
+        assertTrue(script.contains("aria-pressed"))
+        assertTrue(script.contains("data-selected"))
+        assertTrue(script.contains("glownote-reader-background-dot"))
+        assertTrue(script.contains("background: '#2f3133'"))
+        assertTrue(script.contains("text: '#ffffff'"))
         assertTrue(script.contains("onReaderSettingsChanged"))
     }
 
@@ -59,5 +90,14 @@ class AnnotationScriptTest {
         assertTrue(script.contains("#glownote-reader-content{font-size:var(--glownote-reader-font-size,18px)!important;"))
         assertTrue(script.contains("#glownote-reader-content p,#glownote-reader-content li{"))
         assertTrue(script.contains("font-size:var(--glownote-reader-font-size,18px)!important"))
+    }
+
+    @Test
+    fun mobileFallbackDoesNotResizeSiteHeadingsOrSvgIcons() {
+        val script = AnnotationScript.bootstrap
+
+        assertTrue(script.contains("html[data-glownote-mobile] h1,html[data-glownote-mobile] h2,html[data-glownote-mobile] h3"))
+        assertTrue(!script.contains("html[data-glownote-mobile] h1{font-size:"))
+        assertTrue(!script.contains("html[data-glownote-mobile] img,html[data-glownote-mobile] video,html[data-glownote-mobile] canvas,html[data-glownote-mobile] svg"))
     }
 }
