@@ -164,6 +164,7 @@ import com.glownote.mobile.data.ReaderSettings
 import com.glownote.mobile.data.SearchEngine
 import com.glownote.mobile.data.SearchHistoryEntry
 import com.glownote.mobile.data.WebDavSettings
+import com.glownote.mobile.data.filterBySearchQuery
 import com.glownote.mobile.data.formatLocalDateTime
 import com.glownote.mobile.data.glowJson
 import kotlinx.coroutines.delay
@@ -1523,18 +1524,7 @@ private fun LibraryScreen(state: GlowNoteUiState, viewModel: GlowNoteViewModel) 
     val visibleArticles = if (searchQuery.isBlank()) {
         state.articles
     } else {
-        state.articles.mapNotNull { article ->
-            val matchingRecords = article.records.filter { record ->
-                record.selectedText.contains(searchQuery, ignoreCase = true) ||
-                    record.note.contains(searchQuery, ignoreCase = true) ||
-                    (record.tags + record.noteTags).any { tag ->
-                        tag.contains(searchQuery, ignoreCase = true)
-                    }
-            }
-            matchingRecords.takeIf { it.isNotEmpty() }?.let {
-                article.copy(records = it)
-            }
-        }
+        state.articles.mapNotNull { it.filterBySearchQuery(searchQuery) }
     }
     val matchingRecordCount = visibleArticles.sumOf { it.records.size }
 

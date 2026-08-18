@@ -230,6 +230,21 @@ data class ArticleGroup(
     val latest: String,
 )
 
+fun ArticleGroup.filterBySearchQuery(query: String): ArticleGroup? {
+    val normalizedQuery = query.trim().removePrefix("#").trim()
+    if (normalizedQuery.isBlank()) return this
+    if (title.contains(normalizedQuery, ignoreCase = true)) return this
+
+    val matchingRecords = records.filter { record ->
+        record.selectedText.contains(normalizedQuery, ignoreCase = true) ||
+            record.note.contains(normalizedQuery, ignoreCase = true) ||
+            (record.tags + record.noteTags).any { tag ->
+                tag.contains(normalizedQuery, ignoreCase = true)
+            }
+    }
+    return matchingRecords.takeIf { it.isNotEmpty() }?.let { copy(records = it) }
+}
+
 fun normalizeUrl(value: String): String {
     val raw = value.trim()
     if (raw.isBlank()) return ""

@@ -150,4 +150,24 @@ class ModelsTest {
         assertTrue(sameRemoteRecordPayload(listOf(local), listOf(remote)))
         assertFalse(sameRemoteRecordPayload(listOf(local), listOf(remote.copy(note = "changed"))))
     }
+
+    @Test
+    fun articleSearchIncludesTitleAndFiltersRecordMatches() {
+        val article = ArticleGroup(
+            key = "https://example.com/article",
+            url = "https://example.com/article",
+            title = "Kotlin WebDAV Guide",
+            records = listOf(
+                HighlightRecord(id = "one", url = "https://example.com/article", note = "缓存策略"),
+                HighlightRecord(id = "two", url = "https://example.com/article", note = "网络超时"),
+            ),
+            tags = emptyList(),
+            starred = false,
+            latest = "",
+        )
+
+        assertEquals(2, article.filterBySearchQuery("webdav")?.records?.size)
+        assertEquals(listOf("two"), article.filterBySearchQuery("超时")?.records?.map { it.id })
+        assertEquals(null, article.filterBySearchQuery("不存在"))
+    }
 }
