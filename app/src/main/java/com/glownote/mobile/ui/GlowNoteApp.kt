@@ -79,6 +79,7 @@ import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -205,6 +206,13 @@ private fun copyHighlightText(context: Context, text: String) {
     Toast.makeText(context, "已复制高亮文本", Toast.LENGTH_SHORT).show()
 }
 
+private fun copyWebPageUrl(context: Context, url: String) {
+    if (url.isBlank()) return
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
+    clipboard.setPrimaryClip(ClipData.newPlainText("网页地址", url))
+    Toast.makeText(context, "已复制网页链接", Toast.LENGTH_SHORT).show()
+}
+
 private val ClipboardWebUrlPattern = Regex(
     """https?://[^\s<>\"'，。！？、]+""",
     RegexOption.IGNORE_CASE,
@@ -227,7 +235,10 @@ private fun readClipboardWebUrl(context: Context): String? {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ChromeBrowserScreen(state: GlowNoteUiState, viewModel: GlowNoteViewModel) {
+    val activeTab = state.browserTabs.firstOrNull { it.id == state.activeBrowserTabId }
+    val isNewTab = activeTab?.isNewTab == true
     var address by remember(state.activeBrowserTabId, state.currentUrl) { mutableStateOf(state.currentUrl) }
+    var addressFocused by remember(state.activeBrowserTabId, isNewTab) { mutableStateOf(false) }
     var showAnnotationPanel by remember { mutableStateOf(false) }
     var showTabOverview by remember { mutableStateOf(false) }
     var showMoreMenu by remember { mutableStateOf(false) }
@@ -240,7 +251,9 @@ private fun ChromeBrowserScreen(state: GlowNoteUiState, viewModel: GlowNoteViewM
     var activeWebViewCanGoBack by remember(state.activeBrowserTabId) { mutableStateOf(false) }
     val context = LocalContext.current
     val keyboardController = LocalSoftwareKeyboardController.current
-    val activeTab = state.browserTabs.firstOrNull { it.id == state.activeBrowserTabId }
+    val addressFocusRequester = remember(state.activeBrowserTabId) { FocusRequester() }
+    val currentPageUrl = state.currentUrl.ifBlank { activeTab?.url.orEmpty() }
+    val currentPageTitle = state.currentTitle.ifBlank { activeTab?.title.orEmpty() }
     val tabPreviews = remember { mutableStateMapOf<String, Bitmap>() }
     LaunchedEffect(state.browserTabs) {
         val activeIds = state.browserTabs.mapTo(hashSetOf()) { it.id }
@@ -248,7 +261,6 @@ private fun ChromeBrowserScreen(state: GlowNoteUiState, viewModel: GlowNoteViewM
             .filterNot { it in activeIds }
             .forEach { tabPreviews.remove(it) }
     }
-    val isNewTab = activeTab?.isNewTab == true
     val activeTabIndex = state.browserTabs.indexOfFirst { it.id == state.activeBrowserTabId }
     val previousTab = when {
         activeTabIndex > 0 -> state.browserTabs.getOrNull(activeTabIndex - 1)
@@ -256,9 +268,15 @@ private fun ChromeBrowserScreen(state: GlowNoteUiState, viewModel: GlowNoteViewM
         else -> null
     }
     val submitAddress = {
+        addressFocused = false
         showSearchHistory = false
         viewModel.openAddressOrSearch(address)
         keyboardController?.hide()
+        Unit
+    }
+    val editCurrentPageUrl = {
+        address = currentPageUrl
+        addressFocusRequester.requestFocus()
         Unit
     }
     val clearPageSelection = { clearSelectionRequest += 1 }
@@ -353,11 +371,24 @@ private fun ChromeBrowserScreen(state: GlowNoteUiState, viewModel: GlowNoteViewM
             ChromeBrowserBar(
                 address = address,
                 onAddressChange = { address = it },
+                onAddressFocusChanged = { focused ->
+                    addressFocused = focused
+                    if (focused && address == currentPageUrl && currentPageUrl.isNotBlank()) {
+                        address = ""
+                    }
+                },
                 onSubmitAddress = submitAddress,
+                addressFocusRequester = addressFocusRequester,
                 onBack = goBackFromBrowser,
                 onNewTab = addTab,
                 onShowTabs = { showTabOverview = true },
                 onMore = { showMoreMenu = true },
+                currentPageUrl = currentPageUrl,
+                currentPageTitle = currentPageTitle,
+                isAddressFocused = addressFocused,
+                onShareCurrentPage = { shareWebPage(context, currentPageUrl) },
+                onCopyCurrentPage = { copyWebPageUrl(context, currentPageUrl) },
+                onEditCurrentPage = editCurrentPageUrl,
                 isReaderMode = activeTab?.isReaderMode == true,
                 onReader = {
                     showMoreMenu = false
@@ -559,11 +590,19 @@ private fun shareWebPage(context: Context, url: String) {
 private fun ChromeBrowserBar(
     address: String,
     onAddressChange: (String) -> Unit,
+    onAddressFocusChanged: (Boolean) -> Unit,
     onSubmitAddress: () -> Unit,
+    addressFocusRequester: FocusRequester,
     onBack: () -> Unit,
     onNewTab: () -> Unit,
     onShowTabs: () -> Unit,
     onMore: () -> Unit,
+    currentPageUrl: String,
+    currentPageTitle: String,
+    isAddressFocused: Boolean,
+    onShareCurrentPage: () -> Unit,
+    onCopyCurrentPage: () -> Unit,
+    onEditCurrentPage: () -> Unit,
     isReaderMode: Boolean,
     onReader: () -> Unit,
     tabCount: Int,
@@ -574,96 +613,181 @@ private fun ChromeBrowserBar(
         color = Color(0xFFF8F6EE),
         shadowElevation = 1.dp,
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(64.dp)
-                .padding(horizontal = 6.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
+                .padding(bottom = if (isAddressFocused && currentPageUrl.isNotBlank()) 8.dp else 0.dp),
         ) {
-            ChromeIconButton(
-                imageVector = Icons.Default.ArrowBack,
-                contentDescription = "返回上一页",
-                onClick = onBack,
-            )
-            if (showAddressField) {
-                Surface(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(42.dp),
-                    color = Color(0xFFECEAE2),
-                    shape = RoundedCornerShape(22.dp),
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxSize(),
-                        verticalAlignment = Alignment.CenterVertically,
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(64.dp)
+                    .padding(horizontal = 6.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ChromeIconButton(
+                    imageVector = Icons.Default.ArrowBack,
+                    contentDescription = "返回上一页",
+                    onClick = onBack,
+                )
+                if (showAddressField) {
+                    Surface(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(42.dp),
+                        color = Color(0xFFECEAE2),
+                        shape = RoundedCornerShape(22.dp),
                     ) {
-                        BasicTextField(
-                            value = address,
-                            onValueChange = onAddressChange,
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(start = 15.dp, top = 11.dp, bottom = 11.dp),
-                            singleLine = true,
-                            textStyle = MaterialTheme.typography.bodyMedium.copy(color = Ink),
-                            keyboardOptions = KeyboardOptions(
-                                keyboardType = KeyboardType.Uri,
-                                imeAction = ImeAction.Go,
-                            ),
-                            keyboardActions = KeyboardActions(
-                                onGo = { onSubmitAddress() },
-                                onDone = { onSubmitAddress() },
-                            ),
-                            decorationBox = { innerTextField ->
-                                if (address.isBlank()) {
-                                    Text("输入网页地址或搜索内容", color = Muted, fontSize = 14.sp, maxLines = 1)
-                                }
-                                innerTextField()
-                            },
-                        )
-                        IconButton(
-                            onClick = onReader,
-                            modifier = Modifier.size(40.dp),
+                        Row(
+                            modifier = Modifier.fillMaxSize(),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.MenuBook,
-                                contentDescription = "阅读模式与阅读设置",
-                                tint = if (isReaderMode) MaterialTheme.colorScheme.primary else Ink,
-                                modifier = Modifier.size(22.dp),
+                            BasicTextField(
+                                value = address,
+                                onValueChange = onAddressChange,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .focusRequester(addressFocusRequester)
+                                    .onFocusChanged { onAddressFocusChanged(it.isFocused) }
+                                    .padding(start = 15.dp, top = 11.dp, bottom = 11.dp),
+                                singleLine = true,
+                                textStyle = MaterialTheme.typography.bodyMedium.copy(color = Ink),
+                                keyboardOptions = KeyboardOptions(
+                                    keyboardType = KeyboardType.Uri,
+                                    imeAction = ImeAction.Go,
+                                ),
+                                keyboardActions = KeyboardActions(
+                                    onGo = { onSubmitAddress() },
+                                    onDone = { onSubmitAddress() },
+                                ),
+                                decorationBox = { innerTextField ->
+                                    if (address.isBlank()) {
+                                        Text("输入网页地址或搜索内容", color = Muted, fontSize = 14.sp, maxLines = 1)
+                                    }
+                                    innerTextField()
+                                },
+                            )
+                            IconButton(
+                                onClick = onReader,
+                                modifier = Modifier.size(40.dp),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.MenuBook,
+                                    contentDescription = "阅读模式与阅读设置",
+                                    tint = if (isReaderMode) MaterialTheme.colorScheme.primary else Ink,
+                                    modifier = Modifier.size(22.dp),
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    Spacer(Modifier.weight(1f))
+                }
+                ChromeIconButton(
+                    imageVector = Icons.Default.Add,
+                    contentDescription = "新建标签页",
+                    onClick = onNewTab,
+                )
+                IconButton(onClick = onShowTabs, modifier = Modifier.size(40.dp)) {
+                    Surface(
+                        modifier = Modifier.size(24.dp),
+                        color = Color.Transparent,
+                        shape = RoundedCornerShape(5.dp),
+                        border = BorderStroke(2.dp, Ink),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = tabCount.toString(),
+                                color = Ink,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
                             )
                         }
                     }
                 }
-            } else {
-                Spacer(Modifier.weight(1f))
+                ChromeIconButton(
+                    imageVector = Icons.Default.MoreVert,
+                    contentDescription = "更多功能",
+                    onClick = onMore,
+                )
             }
-            ChromeIconButton(
-                imageVector = Icons.Default.Add,
-                contentDescription = "新建标签页",
-                onClick = onNewTab,
-            )
-            IconButton(onClick = onShowTabs, modifier = Modifier.size(40.dp)) {
-                Surface(
-                    modifier = Modifier.size(24.dp),
-                    color = Color.Transparent,
-                    shape = RoundedCornerShape(5.dp),
-                    border = BorderStroke(2.dp, Ink),
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text(
-                            text = tabCount.toString(),
-                            color = Ink,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                        )
-                    }
+            if (showAddressField && isAddressFocused && currentPageUrl.isNotBlank()) {
+                CurrentPageActionRow(
+                    title = currentPageTitle,
+                    url = currentPageUrl,
+                    onShare = onShareCurrentPage,
+                    onCopy = onCopyCurrentPage,
+                    onEdit = onEditCurrentPage,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CurrentPageActionRow(
+    title: String,
+    url: String,
+    onShare: () -> Unit,
+    onCopy: () -> Unit,
+    onEdit: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp),
+        color = Color(0xFFF0EFE7),
+        shape = RoundedCornerShape(16.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Surface(
+                modifier = Modifier.size(36.dp),
+                color = Color.White,
+                shape = RoundedCornerShape(10.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Default.Language,
+                        contentDescription = null,
+                        tint = Color(0xFF4E6B4E),
+                        modifier = Modifier.size(21.dp),
+                    )
                 }
             }
-            ChromeIconButton(
-                imageVector = Icons.Default.MoreVert,
-                contentDescription = "更多功能",
-                onClick = onMore,
-            )
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 10.dp),
+            ) {
+                Text(
+                    text = title.ifBlank { url.hostForDisplay() },
+                    color = Ink,
+                    fontSize = 14.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = url,
+                    color = Muted,
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            IconButton(onClick = onShare, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Default.Share, contentDescription = "分享原链接", tint = Ink, modifier = Modifier.size(22.dp))
+            }
+            IconButton(onClick = onCopy, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Default.ContentCopy, contentDescription = "复制原链接", tint = Ink, modifier = Modifier.size(21.dp))
+            }
+            IconButton(onClick = onEdit, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Default.Edit, contentDescription = "编辑原链接", tint = Ink, modifier = Modifier.size(22.dp))
+            }
         }
     }
 }
