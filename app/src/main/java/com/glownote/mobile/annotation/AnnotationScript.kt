@@ -32,8 +32,23 @@ object AnnotationScript {
           window.__glownoteInstalled = true;
           window.__glownoteRecords = [];
 
+          function normalizeReaderBackground(name) {
+            var value = String(name || 'warm');
+            if (value === 'almond') return 'white';
+            if (value === 'gray') return 'dark';
+            return ['white', 'warm', 'green', 'dark', 'blue'].indexOf(value) >= 0 ? value : 'warm';
+          }
+
           function readerPalette(name) {
             var palettes = {
+              white: {
+                background: '#ffffff',
+                text: '#292929',
+                border: '#dedede',
+                quote: '#f5f5f5',
+                code: '#f1f1f1',
+                link: '#2b6f88'
+              },
               warm: {
                 background: '#fff8ed',
                 text: '#2f302f',
@@ -41,14 +56,6 @@ object AnnotationScript {
                 quote: '#fff2d7',
                 code: '#f2ede4',
                 link: '#2b6f88'
-              },
-              almond: {
-                background: '#f5f0e6',
-                text: '#2d332f',
-                border: '#ddd6c8',
-                quote: '#ebe6d8',
-                code: '#ede9e0',
-                link: '#356d7d'
               },
               green: {
                 background: '#eef5ec',
@@ -66,16 +73,16 @@ object AnnotationScript {
                 code: '#e4edf0',
                 link: '#326d8a'
               },
-              gray: {
-                background: '#f1f1ee',
-                text: '#303331',
-                border: '#ddded9',
-                quote: '#e8eae5',
-                code: '#e7e8e5',
-                link: '#4d6d72'
+              dark: {
+                background: '#2f3133',
+                text: '#ffffff',
+                border: '#55595c',
+                quote: '#3b3e40',
+                code: '#3b3e40',
+                link: '#a8d8ff'
               }
             };
-            return palettes[name] || palettes.warm;
+            return palettes[normalizeReaderBackground(name)] || palettes.warm;
           }
 
           window.__glownoteSyncReaderSettingsMenu = function () {
@@ -85,12 +92,23 @@ object AnnotationScript {
             var fontInput = menu.querySelector('input[data-glownote-reader-control="fontSizeSp"]');
             var lineInput = menu.querySelector('input[data-glownote-reader-control="lineSpacing"]');
             var pageInput = menu.querySelector('input[data-glownote-reader-control="pageSpacingDp"]');
+            var backgroundInput = menu.querySelector('[data-glownote-reader-control="background"]');
             var fontOutput = menu.querySelector('[data-glownote-reader-output="fontSizeSp"]');
             var lineOutput = menu.querySelector('[data-glownote-reader-output="lineSpacing"]');
             var pageOutput = menu.querySelector('[data-glownote-reader-output="pageSpacingDp"]');
             if (fontInput && isFinite(Number(settings.fontSizeSp))) fontInput.value = String(Math.round(Number(settings.fontSizeSp)));
             if (lineInput && isFinite(Number(settings.lineSpacing))) lineInput.value = String(Number(settings.lineSpacing));
             if (pageInput && isFinite(Number(settings.pageSpacingDp))) pageInput.value = String(Math.round(Number(settings.pageSpacingDp)));
+            if (backgroundInput) {
+              var background = normalizeReaderBackground(settings.background);
+              var backgroundButtons = backgroundInput.querySelectorAll('button[data-glownote-reader-background]');
+              for (var backgroundIndex = 0; backgroundIndex < backgroundButtons.length; backgroundIndex += 1) {
+                var backgroundButton = backgroundButtons[backgroundIndex];
+                var selected = backgroundButton.getAttribute('data-glownote-reader-background') === background;
+                backgroundButton.setAttribute('aria-pressed', selected ? 'true' : 'false');
+                backgroundButton.setAttribute('data-selected', selected ? 'true' : 'false');
+              }
+            }
             if (fontOutput) fontOutput.textContent = String(Math.round(Number(settings.fontSizeSp) || 18) + ' sp');
             if (lineOutput) lineOutput.textContent = (Number(settings.lineSpacing) || 1.8).toFixed(1) + ' 倍';
             if (pageOutput) pageOutput.textContent = String(Math.round(Number(settings.pageSpacingDp) || 20) + ' dp');
@@ -101,18 +119,19 @@ object AnnotationScript {
             var fontSize = Number(next.fontSizeSp);
             var lineSpacing = Number(next.lineSpacing);
             var pageSpacing = Number(next.pageSpacingDp);
+            var background = normalizeReaderBackground(next.background);
             if (!isFinite(fontSize)) fontSize = 18;
             if (!isFinite(lineSpacing)) lineSpacing = 1.8;
             if (!isFinite(pageSpacing)) pageSpacing = 20;
             fontSize = Math.max(14, Math.min(28, fontSize));
             lineSpacing = Math.max(1.4, Math.min(2.4, lineSpacing));
             pageSpacing = Math.max(12, Math.min(48, pageSpacing));
-            var palette = readerPalette(String(next.background || 'warm'));
+            var palette = readerPalette(background);
             window.__glownoteReaderSettings = {
               fontSizeSp: fontSize,
               lineSpacing: lineSpacing,
               pageSpacingDp: pageSpacing,
-              background: String(next.background || 'warm')
+              background: background
             };
             var targets = [document.documentElement, document.body, document.getElementById('glownote-reader-root')];
             for (var index = 0; index < targets.length; index += 1) {
@@ -148,11 +167,9 @@ object AnnotationScript {
               'mark[data-glownote-id].glownote-jump-target{outline:3px solid #1e6fa8!important;outline-offset:3px;}',
               'html[data-glownote-mobile]{min-width:0!important;max-width:100%!important;overflow-x:hidden!important;}',
               'html[data-glownote-mobile] body{min-width:0!important;max-width:100%!important;}',
-              'html[data-glownote-mobile] img,html[data-glownote-mobile] video,html[data-glownote-mobile] canvas,html[data-glownote-mobile] svg,html[data-glownote-mobile] iframe{max-width:100%!important;height:auto;}',
+              'html[data-glownote-mobile] img,html[data-glownote-mobile] video,html[data-glownote-mobile] canvas,html[data-glownote-mobile] iframe{max-width:100%!important;height:auto;}',
               'html[data-glownote-mobile] pre,html[data-glownote-mobile] table{max-width:100%!important;overflow-x:auto!important;}',
-              'html[data-glownote-mobile] h1{font-size:clamp(2rem,10vw,3rem)!important;line-height:1.2!important;}',
-              'html[data-glownote-mobile] h2{font-size:clamp(1.5rem,7vw,2.25rem)!important;line-height:1.3!important;}',
-              'html[data-glownote-mobile] h3{font-size:clamp(1.25rem,5.5vw,1.75rem)!important;line-height:1.35!important;}',
+              'html[data-glownote-mobile] h1,html[data-glownote-mobile] h2,html[data-glownote-mobile] h3{max-width:100%!important;overflow-wrap:anywhere!important;word-break:break-word!important;}',
               'html[data-glownote-mobile] p,html[data-glownote-mobile] li{overflow-wrap:anywhere;}',
               'html[data-glownote-site="dg-ai-notes"] #progress-rail{display:none!important;}',
               'html[data-glownote-site="dg-ai-notes"] body,html[data-glownote-site="dg-ai-notes"] .topbar{width:100%!important;min-width:0!important;max-width:100%!important;}',
@@ -749,9 +766,16 @@ object AnnotationScript {
             var fontInput = menu.querySelector('input[data-glownote-reader-control="fontSizeSp"]');
             var lineInput = menu.querySelector('input[data-glownote-reader-control="lineSpacing"]');
             var pageInput = menu.querySelector('input[data-glownote-reader-control="pageSpacingDp"]');
+            var backgroundInput = menu.querySelector('[data-glownote-reader-control="background"]');
             if (fontInput) next.fontSizeSp = Number(fontInput.value);
             if (lineInput) next.lineSpacing = Number(lineInput.value);
             if (pageInput) next.pageSpacingDp = Number(pageInput.value);
+            if (backgroundInput) {
+              var selectedBackground = backgroundInput.querySelector('button[data-glownote-reader-background][aria-pressed="true"]');
+              if (selectedBackground) {
+                next.background = selectedBackground.getAttribute('data-glownote-reader-background') || next.background;
+              }
+            }
             if (window.__glownoteApplyReaderSettings) {
               window.__glownoteApplyReaderSettings(next);
             }
@@ -784,6 +808,13 @@ object AnnotationScript {
             menu.hidden = true;
             menu.innerHTML = [
               '<div class="glownote-reader-settings-title">阅读设置</div>',
+              '<div class="glownote-reader-setting-row glownote-reader-background-row"><span>背景</span><div class="glownote-reader-background-swatches" data-glownote-reader-control="background" role="radiogroup" aria-label="阅读背景">' +
+                '<button type="button" class="glownote-reader-background-dot glownote-reader-background-white" data-glownote-reader-background="white" aria-label="纯白" title="纯白" aria-pressed="false" data-selected="false"></button>' +
+                '<button type="button" class="glownote-reader-background-dot glownote-reader-background-warm" data-glownote-reader-background="warm" aria-label="浅黄色" title="浅黄色" aria-pressed="false" data-selected="false"></button>' +
+                '<button type="button" class="glownote-reader-background-dot glownote-reader-background-green" data-glownote-reader-background="green" aria-label="浅绿色" title="浅绿色" aria-pressed="false" data-selected="false"></button>' +
+                '<button type="button" class="glownote-reader-background-dot glownote-reader-background-dark" data-glownote-reader-background="dark" aria-label="浅黑色" title="浅黑色" aria-pressed="false" data-selected="false"></button>' +
+                '<button type="button" class="glownote-reader-background-dot glownote-reader-background-blue" data-glownote-reader-background="blue" aria-label="浅蓝色" title="浅蓝色" aria-pressed="false" data-selected="false"></button>' +
+              '</div></div>',
               '<label class="glownote-reader-setting-row"><span>字体大小</span><output data-glownote-reader-output="fontSizeSp"></output><input type="range" data-glownote-reader-control="fontSizeSp" min="14" max="28" step="1"></label>',
               '<label class="glownote-reader-setting-row"><span>行间距</span><output data-glownote-reader-output="lineSpacing"></output><input type="range" data-glownote-reader-control="lineSpacing" min="1.4" max="2.4" step="0.1"></label>',
               '<label class="glownote-reader-setting-row"><span>页间距</span><output data-glownote-reader-output="pageSpacingDp"></output><input type="range" data-glownote-reader-control="pageSpacingDp" min="12" max="48" step="4"></label>'
@@ -824,6 +855,19 @@ object AnnotationScript {
               });
             }
 
+            var backgroundButtons = menu.querySelectorAll('button[data-glownote-reader-background]');
+            for (var backgroundButtonIndex = 0; backgroundButtonIndex < backgroundButtons.length; backgroundButtonIndex += 1) {
+              backgroundButtons[backgroundButtonIndex].addEventListener('click', function (event) {
+                event.preventDefault();
+                var buttons = menu.querySelectorAll('button[data-glownote-reader-background]');
+                for (var index = 0; index < buttons.length; index += 1) {
+                  buttons[index].setAttribute('aria-pressed', buttons[index] === event.currentTarget ? 'true' : 'false');
+                  buttons[index].setAttribute('data-selected', buttons[index] === event.currentTarget ? 'true' : 'false');
+                }
+                updateReaderSettingsFromMenu(menu, true);
+              });
+            }
+
             var outsideClick = function (event) {
               var target = event && event.target;
               if (target && target.nodeType !== 1) target = target.parentElement;
@@ -860,8 +904,18 @@ object AnnotationScript {
           }
 
           function pickMainContent() {
+            var csdnContent = document.querySelector('#article_content,.article_content');
+            if (csdnContent && readableText(csdnContent).length >= 80) {
+              var csdnArticle = document.createElement('div');
+              var csdnTitle = document.querySelector('#articleContentId,h1.title-article');
+              if (csdnTitle && readableText(csdnTitle).length > 0) {
+                csdnArticle.appendChild(csdnTitle.cloneNode(true));
+              }
+              csdnArticle.appendChild(csdnContent.cloneNode(true));
+              return csdnArticle;
+            }
             var candidates = document.querySelectorAll(
-              'article,main,[role="main"],[itemprop="articleBody"],#js_content,.rich_media_content,.rich_media_content_inner,#cnblogs_post_body,#post_detail,#mainContent,.blogpost-body,.postBody,.article-content,.post-content,.entry-content,.markdown-body'
+              'article,main,[role="main"],[itemprop="articleBody"],#js_content,.rich_media_content,.rich_media_content_inner,#cnblogs_post_body,#post_detail,#mainContent,.blogpost-body,.postBody,#article_content,.article_content,.article-content,.post-content,.entry-content,.markdown-body'
             );
             var best = document.body;
             var bestScore = Math.min(readableText(document.body).length, 12000);
@@ -886,7 +940,7 @@ object AnnotationScript {
 
           function cleanClone(clone) {
             var removable = clone.querySelectorAll(
-              'script,style,noscript,iframe,canvas,svg,form,nav,aside'
+              'script,style,link,noscript,iframe,canvas,svg,form,nav,aside,button,input,select,textarea'
             );
             for (var index = 0; index < removable.length; index += 1) {
               removeNode(removable[index]);
@@ -944,13 +998,6 @@ object AnnotationScript {
             readerRoot.id = 'glownote-reader-root';
             var header = document.createElement('header');
             header.setAttribute('data-glownote-reader-header', 'true');
-            var heading = document.createElement('h1');
-            heading.textContent = document.title || 'GlowNote 阅读模式';
-            var meta = document.createElement('p');
-            meta.setAttribute('data-glownote-reader-meta', 'true');
-            meta.textContent = location.hostname || '';
-            header.appendChild(heading);
-            header.appendChild(meta);
             readerRoot.appendChild(header);
 
             var content = document.createElement('article');
@@ -980,8 +1027,18 @@ object AnnotationScript {
                 '#glownote-reader-root [data-glownote-reader-settings-menu][hidden]{display:none!important;}',
                 '#glownote-reader-root .glownote-reader-settings-title{margin:0 0 12px!important;font-size:16px!important;font-weight:800!important;}',
                 '#glownote-reader-root .glownote-reader-setting-row{display:grid!important;grid-template-columns:1fr auto!important;gap:7px 10px!important;margin:0 0 14px!important;color:var(--glownote-reader-text,#2f302f)!important;font:14px/1.4 ui-sans-serif,system-ui,sans-serif!important;}',
+                '#glownote-reader-root .glownote-reader-background-row{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:12px!important;}',
                 '#glownote-reader-root .glownote-reader-setting-row output{color:var(--glownote-reader-link,#2b6f88)!important;font-weight:700!important;}',
                 '#glownote-reader-root .glownote-reader-setting-row input{grid-column:1 / -1!important;width:100%!important;margin:0!important;accent-color:var(--glownote-reader-link,#2b6f88)!important;}',
+                '#glownote-reader-root .glownote-reader-background-swatches{display:flex!important;align-items:center!important;gap:9px!important;flex:0 0 auto!important;}',
+                '#glownote-reader-root .glownote-reader-background-dot{width:27px!important;height:27px!important;min-width:27px!important;margin:0!important;padding:0!important;border:2px solid transparent!important;border-radius:50%!important;box-sizing:border-box!important;cursor:pointer!important;box-shadow:0 0 0 1px rgba(47,48,47,.18)!important;transition:transform .16s ease,box-shadow .16s ease!important;}',
+                '#glownote-reader-root .glownote-reader-background-dot:active{transform:scale(.9)!important;}',
+                '#glownote-reader-root .glownote-reader-background-dot[data-selected="true"]{box-shadow:0 0 0 2px var(--glownote-reader-bg,#fff8ed),0 0 0 4px var(--glownote-reader-link,#2b6f88)!important;}',
+                '#glownote-reader-root .glownote-reader-background-white{background:#ffffff!important;border-color:#d8d8d8!important;}',
+                '#glownote-reader-root .glownote-reader-background-warm{background:#fff8ed!important;}',
+                '#glownote-reader-root .glownote-reader-background-green{background:#eef5ec!important;}',
+                '#glownote-reader-root .glownote-reader-background-dark{background:#2f3133!important;}',
+                '#glownote-reader-root .glownote-reader-background-blue{background:#edf4f7!important;}',
                 '#glownote-reader-root h1{margin:0 0 8px!important;font-size:clamp(28px,9vw,54px)!important;line-height:1.25!important;font-weight:800!important;}',
                 '#glownote-reader-root h2{margin:30px 0 12px!important;padding-bottom:6px!important;border-bottom:1px solid var(--glownote-reader-border,#e9ddca)!important;font-size:clamp(22px,6vw,40px)!important;line-height:1.35!important;}',
                 '#glownote-reader-root h3{margin:24px 0 8px!important;font-size:clamp(19px,5vw,32px)!important;line-height:1.45!important;}',

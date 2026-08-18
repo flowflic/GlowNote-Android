@@ -47,10 +47,17 @@ fun ReaderSettings.sanitized(): ReaderSettings = copy(
     fontSizeSp = fontSizeSp.coerceIn(14, 28),
     lineSpacing = if (lineSpacing.isFinite()) lineSpacing.coerceIn(1.4f, 2.4f) else 1.8f,
     pageSpacingDp = pageSpacingDp.coerceIn(12, 48),
-    background = background.takeIf { it in READER_BACKGROUND_IDS } ?: "warm",
+    background = when (background) {
+        // Keep settings written by the first reader-settings build readable
+        // after the palette was simplified to the five visible choices.
+        "almond" -> "white"
+        "gray" -> "dark"
+        in READER_BACKGROUND_IDS -> background
+        else -> "warm"
+    },
 )
 
-private val READER_BACKGROUND_IDS = setOf("warm", "almond", "green", "blue", "gray")
+private val READER_BACKGROUND_IDS = setOf("white", "warm", "green", "dark", "blue")
 
 enum class SearchEngine(
     val id: String,
