@@ -5,12 +5,14 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import java.io.IOException
 import java.util.LinkedHashMap
 
 data class SyncResult(
     val uploaded: Int,
     val downloaded: Int,
     val attempts: Int,
+    val usedCache: Boolean = false,
 )
 
 class GlowNoteRepository(
@@ -169,31 +171,97 @@ class GlowNoteRepository(
     suspend fun sync(settings: AppSettings): SyncResult = syncMutex.withLock {
         require(settings.webdav.enabled) { "WebDAV sync is disabled" }
         var lastError: Throwable? = null
+        var collectionsEnsured = false
         try {
             val clientId = store.readClientId()
+            var remoteCache = store.readWebDavCache()?.takeIf {
+                it.endpointKey == webDav.cacheKey(settings)
+            }
             for (attempt in 1..MAX_SYNC_ATTEMPTS) {
-                val remote = webDav.readSnapshot(settings)
+                val remote = webDav.readSnapshot(settings, remoteCache)
+                if (!remote.notModified) {
+                    remoteCache = rememberWebDavCache(settings, remote)
+                }
                 val localBeforeMerge = store.readRecords()
-                val merged = mergeRecords(localBeforeMerge, remote.snapshot.highlights)
-                store.writeRecords(merged)
+                val localHasChanges = localBeforeMerge.any {
+                    syncBoolean(it.sync, "webdavDirty", default = true)
+                }
+                if (remote.notModified && !localHasChanges) {
+                    markSyncCompleted()
+                    return@withLock SyncResult(
+                        uploaded = 0,
+                        downloaded = remoteCache?.recordCount ?: localBeforeMerge.size,
+                        attempts = attempt,
+                        usedCache = true,
+                    )
+                }
+
+                val merged = if (remote.notModified) {
+                    // The validator proves that the remote snapshot is the
+                    // same snapshot already represented by local records.
+                    localBeforeMerge
+                } else {
+                    mergeRecords(localBeforeMerge, remote.snapshot.highlights)
+                }
+                if (merged != localBeforeMerge) store.writeRecords(merged)
+
+                // A sync must still read the remote snapshot, but it does not
+                // need to rewrite an identical full snapshot. This is the hot
+                // path when the app is opened just to pick up remote changes.
+                if (remote.exists && sameRemoteRecordPayload(merged, remote.snapshot.highlights)) {
+                    markSyncCompleted()
+                    return@withLock SyncResult(
+                        uploaded = 0,
+                        downloaded = remote.snapshot.highlights.size,
+                        attempts = attempt,
+                    )
+                }
 
                 val uploadRecords = merged.map(::withWebDavSynced)
                 val submissionId = createId()
-                webDav.writeSnapshot(settings, remote.snapshot, uploadRecords, clientId, submissionId)
-                val confirmed = webDav.readSnapshot(settings)
+                if (!collectionsEnsured) {
+                    webDav.ensureCollections(settings)
+                    collectionsEnsured = true
+                }
+                val confirmed = try {
+                    webDav.writeSnapshot(settings, remote.snapshot, uploadRecords, clientId, submissionId)
+                    webDav.readSnapshot(settings)
+                } catch (writeError: IOException) {
+                    // A PUT can succeed on the server while its response is
+                    // lost. Read the snapshot before reporting failure so we
+                    // do not submit the same full snapshot twice.
+                    val observed = try {
+                        webDav.readSnapshot(settings)
+                    } catch (_: IOException) {
+                        null
+                    }
+                    if (observed != null) {
+                        remoteCache = rememberWebDavCache(settings, observed)
+                    }
+                    when {
+                        observed?.snapshot?.submissionId == submissionId -> observed
+                        observed != null -> {
+                            lastError = IllegalStateException("WebDAV snapshot changed before confirmation")
+                            continue
+                        }
+                        else -> throw writeError
+                    }
+                }
                 if (confirmed.snapshot.submissionId == submissionId) {
+                    if (!confirmed.notModified) {
+                        remoteCache = rememberWebDavCache(settings, confirmed)
+                    }
                     markUploadedRecords(uploadRecords)
-                    val currentSettings = store.readSettings()
-                    store.writeSettings(
-                        currentSettings.copy(
-                            lastSyncAt = nowIso(),
-                            lastSyncError = "",
-                        ),
-                    )
+                    markSyncCompleted()
                     return@withLock SyncResult(
                         uploaded = uploadRecords.size,
-                        downloaded = remote.snapshot.highlights.size,
+                        downloaded = if (remote.notModified) {
+                            remoteCache?.recordCount ?: 0
+                        } else {
+                            remote.snapshot.highlights.size
+                        },
                         attempts = attempt,
+                        usedCache = remote.notModified,
                     )
                 }
 
@@ -225,7 +293,40 @@ class GlowNoteRepository(
                 record
             }
         }
-        store.writeRecords(marked)
+        if (marked != current) store.writeRecords(marked)
+    }
+
+    private suspend fun markSyncCompleted() {
+        val currentSettings = store.readSettings()
+        store.writeSettings(
+            currentSettings.copy(
+                lastSyncAt = nowIso(),
+                lastSyncError = "",
+            ),
+        )
+    }
+
+    private suspend fun rememberWebDavCache(
+        settings: AppSettings,
+        remote: RemoteRead,
+    ): WebDavCache? {
+        if (!remote.exists) {
+            store.clearWebDavCache()
+            return null
+        }
+        val cache = WebDavCache(
+            endpointKey = webDav.cacheKey(settings),
+            etag = remote.validator.etag,
+            lastModified = remote.validator.lastModified,
+            revision = remote.snapshot.revision,
+            updatedAt = remote.snapshot.updatedAt,
+            writerClientId = remote.snapshot.writerClientId,
+            submissionId = remote.snapshot.submissionId,
+            notionLease = remote.snapshot.notionLease,
+            recordCount = remote.snapshot.highlights.size,
+        )
+        store.writeWebDavCache(cache)
+        return cache
     }
 
     private fun mergeRecords(
@@ -315,6 +416,16 @@ class GlowNoteRepository(
     companion object {
         private const val MAX_SYNC_ATTEMPTS = 4
     }
+}
+
+internal fun sameRemoteRecordPayload(
+    left: List<HighlightRecord>,
+    right: List<HighlightRecord>,
+): Boolean {
+    if (left.size != right.size) return false
+    val leftPayload = left.map { it.id to contentSignature(it) }.sortedBy { it.first }
+    val rightPayload = right.map { it.id to contentSignature(it) }.sortedBy { it.first }
+    return leftPayload == rightPayload
 }
 
 fun groupArticles(records: List<HighlightRecord>): List<ArticleGroup> {

@@ -164,6 +164,7 @@ import com.glownote.mobile.data.ReaderSettings
 import com.glownote.mobile.data.SearchEngine
 import com.glownote.mobile.data.SearchHistoryEntry
 import com.glownote.mobile.data.WebDavSettings
+import com.glownote.mobile.data.formatLocalDateTime
 import com.glownote.mobile.data.glowJson
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -397,7 +398,7 @@ private fun ChromeBrowserScreen(state: GlowNoteUiState, viewModel: GlowNoteViewM
                 tabCount = state.browserTabs.size,
                 showAddressField = !isNewTab,
             )
-            if (state.status.isNotBlank()) {
+            if (state.status.isNotBlank() && !isSyncStatusMessage(state.status)) {
                 Text(
                     state.status,
                     color = if (state.statusIsError) Color(0xFFB3261E) else Muted,
@@ -1635,7 +1636,7 @@ private fun LibraryScreen(state: GlowNoteUiState, viewModel: GlowNoteViewModel) 
             }
         }
 
-        if (state.status.isNotBlank()) {
+        if (state.status.isNotBlank() && !isSyncStatusMessage(state.status)) {
             StatusLine(state.status, state.statusIsError)
         }
 
@@ -1746,7 +1747,7 @@ private fun TabletLibraryLayout(
             )
         }
 
-        if (state.status.isNotBlank()) {
+        if (state.status.isNotBlank() && !isSyncStatusMessage(state.status)) {
             StatusLine(state.status, state.statusIsError)
         }
 
@@ -2710,6 +2711,13 @@ private fun StatusLine(message: String, isError: Boolean) {
     }
 }
 
+private fun isSyncStatusMessage(message: String): Boolean {
+    val normalized = message.lowercase()
+    return message.contains("同步") ||
+        normalized.contains("webdav") ||
+        normalized.contains("timeout")
+}
+
 @Composable
 private fun BrowserScreen(state: GlowNoteUiState, viewModel: GlowNoteViewModel) {
     var address by remember(state.activeBrowserTabId, state.currentUrl) { mutableStateOf(state.currentUrl) }
@@ -2818,7 +2826,7 @@ private fun BrowserScreen(state: GlowNoteUiState, viewModel: GlowNoteViewModel) 
                 Icon(Icons.Default.Add, contentDescription = "新建标签页")
             }
         }
-        if (state.status.isNotBlank()) {
+        if (state.status.isNotBlank() && !isSyncStatusMessage(state.status)) {
             Text(
                 state.status,
                 color = if (state.statusIsError) Color(0xFFB3261E) else Muted,
@@ -3685,6 +3693,11 @@ private fun SettingsScreen(state: GlowNoteUiState, viewModel: GlowNoteViewModel)
     LaunchedEffect(Unit) {
         viewModel.checkForAppUpdate()
     }
+    LaunchedEffect(state.status) {
+        val completedStatus = state.status.takeIf { it.startsWith("同步完成") } ?: return@LaunchedEffect
+        delay(3_000)
+        viewModel.clearStatusIf(completedStatus)
+    }
 
     val draftSettings = {
         AppSettings(
@@ -3829,7 +3842,7 @@ private fun SettingsScreen(state: GlowNoteUiState, viewModel: GlowNoteViewModel)
 
         Spacer(Modifier.height(15.dp))
         if (state.settings.lastSyncAt.isNotBlank()) {
-            Text("上次同步：${state.settings.lastSyncAt}", color = Muted, fontSize = 12.sp)
+            Text("上次同步：${formatLocalDateTime(state.settings.lastSyncAt)}", color = Muted, fontSize = 12.sp)
         }
         if (state.status.isNotBlank()) StatusLine(state.status, state.statusIsError)
         Spacer(Modifier.height(10.dp))

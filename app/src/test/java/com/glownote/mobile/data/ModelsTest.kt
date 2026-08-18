@@ -9,6 +9,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.ZoneId
 
 class ModelsTest {
     @Test
@@ -126,5 +127,27 @@ class ModelsTest {
 
         assertEquals("white", ReaderSettings(background = "almond").sanitized().background)
         assertEquals("dark", ReaderSettings(background = "gray").sanitized().background)
+    }
+
+    @Test
+    fun syncTimestampIsDisplayedInTheDeviceTimeZone() {
+        assertEquals(
+            "2026-08-18 22:45:22",
+            formatLocalDateTime("2026-08-18T14:45:22.694458Z", ZoneId.of("Asia/Shanghai")),
+        )
+    }
+
+    @Test
+    fun remotePayloadComparisonIgnoresSyncMetadata() {
+        val local = HighlightRecord(
+            id = "record-1",
+            url = "https://example.com/article",
+            selectedText = "text",
+            note = "note",
+        )
+        val remote = withWebDavSynced(local)
+
+        assertTrue(sameRemoteRecordPayload(listOf(local), listOf(remote)))
+        assertFalse(sameRemoteRecordPayload(listOf(local), listOf(remote.copy(note = "changed"))))
     }
 }

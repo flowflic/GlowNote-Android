@@ -702,29 +702,51 @@ class GlowNoteViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun syncNow() {
+    fun syncOnAppForeground() {
         if (syncJob?.isActive == true) return
-        if (!_ui.value.settings.webdav.enabled) {
+        syncJob = viewModelScope.launch {
+            val settings = withContext(Dispatchers.IO) { repository.settings() }
+            _ui.update { it.copy(settings = settings) }
+            if (settings.webdav.enabled) {
+                runSync(settings, "正在自动同步…")
+            }
+        }
+    }
+
+    fun syncNow() {
+        val settings = _ui.value.settings
+        if (!settings.webdav.enabled) {
             setStatus("请先在设置中启用 WebDAV", true)
             return
         }
-        syncJob = viewModelScope.launch {
-            _ui.update { it.copy(isSyncing = true, status = "正在同步…", statusIsError = false) }
-            runCatching {
-                withContext(Dispatchers.IO) { repository.sync(_ui.value.settings) }
-            }.onSuccess { result ->
-                refreshInternal()
-                _ui.update {
-                    it.copy(
-                        isSyncing = false,
-                        status = "同步完成 · ${result.downloaded} 篇远程记录",
-                        statusIsError = false,
-                    )
-                }
-            }.onFailure { error ->
-                _ui.update {
-                    it.copy(isSyncing = false, status = error.message ?: "同步失败", statusIsError = true)
-                }
+        startSync(settings, "正在同步…")
+    }
+
+    private fun startSync(settings: AppSettings, progressMessage: String) {
+        if (syncJob?.isActive == true) return
+        syncJob = viewModelScope.launch { runSync(settings, progressMessage) }
+    }
+
+    private suspend fun runSync(settings: AppSettings, progressMessage: String) {
+        _ui.update { it.copy(isSyncing = true, status = progressMessage, statusIsError = false) }
+        runCatching {
+            withContext(Dispatchers.IO) { repository.sync(settings) }
+        }.onSuccess { result ->
+            refreshInternal()
+            _ui.update {
+                it.copy(
+                    isSyncing = false,
+                    status = if (result.usedCache) {
+                        "同步完成 · 使用本地缓存 · ${result.downloaded} 篇记录"
+                    } else {
+                        "同步完成 · ${result.downloaded} 篇远程记录"
+                    },
+                    statusIsError = false,
+                )
+            }
+        }.onFailure { error ->
+            _ui.update {
+                it.copy(isSyncing = false, status = error.message ?: "同步失败", statusIsError = true)
             }
         }
     }
@@ -784,6 +806,16 @@ class GlowNoteViewModel(application: Application) : AndroidViewModel(application
 
     private fun setStatus(message: String, error: Boolean) {
         _ui.update { it.copy(status = message, statusIsError = error) }
+    }
+
+    fun clearStatusIf(expected: String) {
+        _ui.update {
+            if (it.status == expected) {
+                it.copy(status = "", statusIsError = false)
+            } else {
+                it
+            }
+        }
     }
 
     private fun annotationDraft(record: HighlightRecord): AnnotationDraft = AnnotationDraft(

@@ -70,6 +70,23 @@ class LocalStore(context: Context) {
         writeSettingsUnsafe(settings)
     }
 
+    suspend fun readWebDavCache(): WebDavCache? = mutex.withLock {
+        val raw = preferences.getString(KEY_WEBDAV_CACHE, "").orEmpty()
+        if (raw.isBlank()) return@withLock null
+        runCatching {
+            glowJson.decodeFromString(WebDavCache.serializer(), raw)
+        }.getOrNull()
+    }
+
+    suspend fun writeWebDavCache(cache: WebDavCache) = mutex.withLock {
+        val raw = glowJson.encodeToString(WebDavCache.serializer(), cache)
+        preferences.edit().putString(KEY_WEBDAV_CACHE, raw).apply()
+    }
+
+    suspend fun clearWebDavCache() = mutex.withLock {
+        preferences.edit().remove(KEY_WEBDAV_CACHE).apply()
+    }
+
     suspend fun readClientId(): String = mutex.withLock {
         val current = preferences.getString(KEY_CLIENT_ID, "").orEmpty()
         if (current.isNotBlank()) return@withLock current
@@ -107,5 +124,6 @@ class LocalStore(context: Context) {
         private const val KEY_BROWSER_BOOKMARKS = "browserBookmarks"
         private const val KEY_SETTINGS = "settings"
         private const val KEY_CLIENT_ID = "clientId"
+        private const val KEY_WEBDAV_CACHE = "webdavCache"
     }
 }

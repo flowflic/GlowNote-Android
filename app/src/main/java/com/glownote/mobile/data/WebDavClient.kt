@@ -7,29 +7,76 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.MediaType.Companion.toMediaType
+import kotlinx.coroutines.delay
+import java.io.IOException
+import java.io.InterruptedIOException
+import java.net.ConnectException
+import java.net.NoRouteToHostException
+import java.net.SocketTimeoutException
 import java.util.concurrent.TimeUnit
 
 data class RemoteRead(
     val snapshot: RemoteSnapshot,
     val exists: Boolean,
     val migratedFromLegacy: Boolean = false,
+    val validator: WebDavValidator = WebDavValidator(),
+    val notModified: Boolean = false,
+)
+
+data class WebDavValidator(
+    val etag: String = "",
+    val lastModified: String = "",
+)
+
+private data class SnapshotRead(
+    val snapshot: RemoteSnapshot? = null,
+    val exists: Boolean = false,
+    val validator: WebDavValidator = WebDavValidator(),
+    val notModified: Boolean = false,
 )
 
 class WebDavClient(
     private val httpClient: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
-        .writeTimeout(60, TimeUnit.SECONDS)
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .writeTimeout(45, TimeUnit.SECONDS)
+        .callTimeout(50, TimeUnit.SECONDS)
         .build(),
 ) {
-    suspend fun readSnapshot(settings: AppSettings): RemoteRead {
+    suspend fun readSnapshot(settings: AppSettings, cached: WebDavCache? = null): RemoteRead {
         validateScheme(settings.webdav.url)
-        val current = readAt(settings, fileUrl(settings, versionedPath(settings.webdav.path)))
-        if (current != null) return RemoteRead(current, exists = true)
+        val cachedForEndpoint = cached?.takeIf {
+            it.endpointKey == cacheKey(settings) && it.hasValidator()
+        }
+        val current = readAt(
+            settings,
+            fileUrl(settings, versionedPath(settings.webdav.path)),
+            cachedForEndpoint?.let { WebDavValidator(it.etag, it.lastModified) },
+        )
+        if (current.notModified && cachedForEndpoint != null) {
+            return RemoteRead(
+                snapshot = cachedForEndpoint.toRemoteSnapshot(),
+                exists = true,
+                validator = current.validator,
+                notModified = true,
+            )
+        }
+        if (current.snapshot != null) {
+            return RemoteRead(
+                snapshot = current.snapshot,
+                exists = true,
+                validator = current.validator,
+            )
+        }
 
         val legacy = readAt(settings, fileUrl(settings, settings.webdav.path))
-        return if (legacy != null) {
-            RemoteRead(legacy, exists = false, migratedFromLegacy = true)
+        return if (legacy.snapshot != null) {
+            RemoteRead(
+                snapshot = legacy.snapshot,
+                exists = false,
+                migratedFromLegacy = true,
+                validator = legacy.validator,
+            )
         } else {
             RemoteRead(RemoteSnapshot(), exists = false)
         }
@@ -43,7 +90,6 @@ class WebDavClient(
         submissionId: String,
     ) {
         validateScheme(settings.webdav.url)
-        ensureCollections(settings)
         val body = glowJson.encodeToString(
             RemoteSnapshot.serializer(),
             RemoteSnapshot(
@@ -60,15 +106,26 @@ class WebDavClient(
             .url(fileUrl(settings, versionedPath(settings.webdav.path)))
             .put(body.toRequestBody(JSON_MEDIA_TYPE))
         authenticated(requestBuilder, settings)
-        execute(requestBuilder.build()).use { response ->
+        execute(requestBuilder.build(), "PUT").use { response ->
             if (!response.isSuccessful) error("WebDAV PUT failed: ${response.code}")
         }
     }
 
+    suspend fun ensureCollections(settings: AppSettings) {
+        validateScheme(settings.webdav.url)
+        ensureCollectionsInternal(settings)
+    }
+
+    fun cacheKey(settings: AppSettings): String = listOf(
+        settings.webdav.url.trim().trimEnd('/'),
+        settings.webdav.path.trim().trim('/'),
+        settings.webdav.username.trim(),
+    ).joinToString("\n")
+
     suspend fun testConnection(settings: AppSettings) {
         require(settings.webdav.url.isNotBlank()) { "WebDAV URL is required" }
         validateScheme(settings.webdav.url)
-        ensureCollections(settings)
+        ensureCollectionsInternal(settings)
 
         val configured = settings.webdav.path.trim().trim('/').ifBlank { "highlight-extension/sync.json" }
         val parent = configured.substringBeforeLast('/', "")
@@ -81,7 +138,7 @@ class WebDavClient(
             .url(probeUrl)
             .put("{\"nonce\":\"$nonce\"}".toRequestBody(JSON_MEDIA_TYPE))
         authenticated(requestBuilder, settings)
-        execute(requestBuilder.build()).use { response ->
+        execute(requestBuilder.build(), "test PUT").use { response ->
             if (!response.isSuccessful) error("WebDAV test PUT failed: ${response.code}")
         }
 
@@ -90,15 +147,15 @@ class WebDavClient(
                 .url(probeUrl.newBuilder().addQueryParameter("hns_read", createId()).build())
                 .get()
             authenticated(readRequestBuilder, settings)
-            execute(readRequestBuilder.build()).use { response ->
+            executeWithRetry(readRequestBuilder.build(), "test GET") { response ->
                 if (!response.isSuccessful) error("WebDAV test GET failed: ${response.code}")
-                val body = response.body?.string().orEmpty()
+                val body = readBody(response, "test GET")
                 if (!body.contains(nonce)) error("WebDAV test read returned unexpected content")
             }
         } finally {
             val deleteBuilder = Request.Builder().url(probeUrl).delete()
             authenticated(deleteBuilder, settings)
-            execute(deleteBuilder.build()).use { response ->
+            execute(deleteBuilder.build(), "test DELETE").use { response ->
                 if (!response.isSuccessful && response.code != 404) {
                     error("WebDAV test cleanup failed: ${response.code}")
                 }
@@ -106,18 +163,47 @@ class WebDavClient(
         }
     }
 
-    private fun readAt(settings: AppSettings, url: HttpUrl): RemoteSnapshot? {
+    private suspend fun readAt(
+        settings: AppSettings,
+        url: HttpUrl,
+        cachedValidator: WebDavValidator? = null,
+    ): SnapshotRead {
         val requestBuilder = Request.Builder()
             .url(url.newBuilder().addQueryParameter("hns_read", createId()).build())
             .get()
+        if (!cachedValidator?.etag.isNullOrBlank()) {
+            requestBuilder.header("If-None-Match", cachedValidator?.etag.orEmpty())
+        }
+        if (!cachedValidator?.lastModified.isNullOrBlank()) {
+            requestBuilder.header("If-Modified-Since", cachedValidator?.lastModified.orEmpty())
+        }
         authenticated(requestBuilder, settings)
-        execute(requestBuilder.build()).use { response ->
-            if (response.code == 404) return null
+        return executeWithRetry(requestBuilder.build(), "GET") { response ->
+            if (response.code == 304) {
+                return@executeWithRetry SnapshotRead(
+                    exists = true,
+                    validator = responseValidator(response, cachedValidator),
+                    notModified = true,
+                )
+            }
+            if (response.code == 404) return@executeWithRetry SnapshotRead()
             if (!response.isSuccessful) error("WebDAV GET failed: ${response.code}")
-            val body = response.body?.string().orEmpty()
-            return glowJson.decodeFromString(RemoteSnapshot.serializer(), body)
+            val body = readBody(response, "GET")
+            SnapshotRead(
+                snapshot = glowJson.decodeFromString(RemoteSnapshot.serializer(), body),
+                exists = true,
+                validator = responseValidator(response),
+            )
         }
     }
+
+    private fun responseValidator(
+        response: okhttp3.Response,
+        fallback: WebDavValidator? = null,
+    ): WebDavValidator = WebDavValidator(
+        etag = response.header("ETag").orEmpty().ifBlank { fallback?.etag.orEmpty() },
+        lastModified = response.header("Last-Modified").orEmpty().ifBlank { fallback?.lastModified.orEmpty() },
+    )
 
     private fun fileUrl(settings: AppSettings, path: String): HttpUrl {
         val base = settings.webdav.url.trimEnd('/').toHttpUrlOrNull()
@@ -127,7 +213,7 @@ class WebDavClient(
             .build()
     }
 
-    private fun ensureCollections(settings: AppSettings) {
+    private suspend fun ensureCollectionsInternal(settings: AppSettings) {
         val configuredPath = versionedPath(settings.webdav.path).trim('/')
         val parent = configuredPath.substringBeforeLast('/', "")
         if (parent.isBlank()) return
@@ -139,7 +225,7 @@ class WebDavClient(
             current = current.newBuilder().addPathSegment(part).build()
             val requestBuilder = Request.Builder().url(current).method("MKCOL", null)
             authenticated(requestBuilder, settings)
-            execute(requestBuilder.build()).use { response ->
+            executeWithRetry(requestBuilder.build(), "MKCOL") { response ->
                 if (!isMkcolSuccessStatus(response.code)) {
                     error("WebDAV MKCOL failed: ${response.code}")
                 }
@@ -157,7 +243,49 @@ class WebDavClient(
         builder.header("Cache-Control", "no-cache")
     }
 
-    private fun execute(request: Request) = httpClient.newCall(request).execute()
+    private fun execute(request: Request, operation: String): okhttp3.Response = try {
+        httpClient.newCall(request).execute()
+    } catch (error: SocketTimeoutException) {
+        val wrapped = SocketTimeoutException("WebDAV $operation timeout")
+        wrapped.initCause(error)
+        throw wrapped
+    } catch (error: IOException) {
+        throw IOException("WebDAV $operation network error: ${error.message}", error)
+    }
+
+    private fun readBody(response: okhttp3.Response, operation: String): String = try {
+        response.body?.string().orEmpty()
+    } catch (error: SocketTimeoutException) {
+        val wrapped = SocketTimeoutException("WebDAV $operation timeout")
+        wrapped.initCause(error)
+        throw wrapped
+    } catch (error: IOException) {
+        throw IOException("WebDAV $operation network error: ${error.message}", error)
+    }
+
+    private suspend fun <T> executeWithRetry(
+        request: Request,
+        operation: String,
+        block: (okhttp3.Response) -> T,
+    ): T {
+        var lastError: IOException? = null
+        repeat(MAX_SAFE_REQUEST_ATTEMPTS) { index ->
+            try {
+                return execute(request, operation).use(block)
+            } catch (error: IOException) {
+                lastError = error
+                if (index == MAX_SAFE_REQUEST_ATTEMPTS - 1 || !isTransient(error)) throw error
+                delay(SAFE_REQUEST_BACKOFF_MS[index])
+            }
+        }
+        throw lastError ?: IOException("WebDAV $operation failed")
+    }
+
+    private fun isTransient(error: IOException): Boolean =
+        error is SocketTimeoutException ||
+            error is InterruptedIOException ||
+            error is ConnectException ||
+            error is NoRouteToHostException
 
     private fun validateScheme(value: String) {
         val parsed = value.toHttpUrlOrNull() ?: error("WebDAV URL must be a valid URL")
@@ -177,8 +305,19 @@ class WebDavClient(
 
     companion object {
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+        private const val MAX_SAFE_REQUEST_ATTEMPTS = 2
+        private val SAFE_REQUEST_BACKOFF_MS = longArrayOf(250L)
     }
 }
+
+private fun WebDavCache.toRemoteSnapshot(): RemoteSnapshot = RemoteSnapshot(
+    version = 2,
+    revision = revision,
+    updatedAt = updatedAt,
+    writerClientId = writerClientId,
+    submissionId = submissionId,
+    notionLease = notionLease,
+)
 
 internal fun isMkcolSuccessStatus(code: Int): Boolean =
     code == 200 || code == 201 || code == 204 || code == 301 || code == 405

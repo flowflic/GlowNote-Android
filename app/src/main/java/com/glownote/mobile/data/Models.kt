@@ -12,6 +12,8 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.net.URLEncoder
 import java.util.UUID
 
@@ -23,6 +25,16 @@ val glowJson = Json {
 }
 
 fun nowIso(): String = Instant.now().toString()
+
+private val DISPLAY_DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+
+fun formatLocalDateTime(value: String, zoneId: ZoneId = ZoneId.systemDefault()): String {
+    val raw = value.trim()
+    if (raw.isBlank()) return ""
+    return runCatching {
+        Instant.parse(raw).atZone(zoneId).format(DISPLAY_DATE_TIME_FORMATTER)
+    }.getOrDefault(raw)
+}
 
 fun createId(): String = UUID.randomUUID().toString()
 
@@ -96,6 +108,21 @@ data class AppSettings(
     val lastSyncAt: String = "",
     val lastSyncError: String = "",
 )
+
+@Serializable
+data class WebDavCache(
+    val endpointKey: String = "",
+    val etag: String = "",
+    val lastModified: String = "",
+    val revision: Long = 0,
+    val updatedAt: String = "",
+    val writerClientId: String = "",
+    val submissionId: String = "",
+    val notionLease: JsonObject? = null,
+    val recordCount: Int = 0,
+)
+
+fun WebDavCache.hasValidator(): Boolean = etag.isNotBlank() || lastModified.isNotBlank()
 
 @Serializable
 data class BrowserHistoryEntry(
