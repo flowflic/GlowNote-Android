@@ -141,6 +141,9 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -193,9 +196,49 @@ private val HeatmapColors = listOf(
     Color(0xFF6FAED0),
     Color(0xFF1E6FA8),
 )
+private val SearchMatchBackground = Color(0xFFFFD54F)
 
 private const val TAB_PREVIEW_WIDTH_PX = 600
 private const val TAB_PREVIEW_HEIGHT_PX = 760
+
+private fun highlightSearchMatches(text: String, query: String): AnnotatedString {
+    val normalizedQuery = query.trim().removePrefix("#").trim()
+    if (normalizedQuery.isBlank() || text.isBlank()) return AnnotatedString(text)
+
+    val builder = AnnotatedString.Builder()
+    val matcher = Regex(Regex.escape(normalizedQuery), RegexOption.IGNORE_CASE)
+    var cursor = 0
+    matcher.findAll(text).forEach { match ->
+        builder.append(text.substring(cursor, match.range.first))
+        builder.pushStyle(
+            SpanStyle(
+                background = SearchMatchBackground,
+                color = Ink,
+                fontWeight = FontWeight.Bold,
+            ),
+        )
+        builder.append(match.value)
+        builder.pop()
+        cursor = match.range.last + 1
+    }
+    builder.append(text.substring(cursor))
+    return builder.toAnnotatedString()
+}
+
+private fun firstSearchMatchPreview(records: List<HighlightRecord>, query: String): String? {
+    val normalizedQuery = query.trim().removePrefix("#").trim()
+    if (normalizedQuery.isBlank()) return null
+    return records.asSequence().mapNotNull { record ->
+        when {
+            record.selectedText.contains(normalizedQuery, ignoreCase = true) -> record.selectedText
+            record.note.contains(normalizedQuery, ignoreCase = true) -> record.note
+            (record.tags + record.noteTags).any { tag ->
+                tag.contains(normalizedQuery, ignoreCase = true)
+            } -> (record.tags + record.noteTags).distinct().joinToString("  ") { "#$it" }
+            else -> null
+        }
+    }.firstOrNull()
+}
 
 private enum class BrowserPanel {
     HISTORY,
@@ -1655,6 +1698,7 @@ private fun LibraryScreen(state: GlowNoteUiState, viewModel: GlowNoteViewModel) 
                     onOpenWeb = { viewModel.openArticle(article.url, article.title) },
                     onStar = { viewModel.toggleArticleStar(article) },
                     onDelete = { viewModel.deleteArticle(article) },
+                    searchQuery = searchQuery,
                 )
                 Spacer(Modifier.height(12.dp))
             }
@@ -1812,6 +1856,7 @@ private fun TabletLibraryLayout(
                                     onDelete = { viewModel.deleteArticle(article) },
                                     selected = selectedArticle?.key == article.key,
                                     compact = true,
+                                    searchQuery = searchQuery,
                                 )
                                 Spacer(Modifier.height(10.dp))
                             }
@@ -2032,6 +2077,7 @@ private fun ArticleCard(
     onDelete: () -> Unit,
     selected: Boolean = false,
     compact: Boolean = false,
+    searchQuery: String = "",
 ) {
     val cardShape = RoundedCornerShape(22.dp)
     val revealWidth = 76.dp
@@ -2039,6 +2085,7 @@ private fun ArticleCard(
     val revealWidthPx = with(density) { revealWidth.toPx() }
     val offsetX = remember(article.key) { Animatable(0f) }
     val scope = rememberCoroutineScope()
+    val searchPreview = firstSearchMatchPreview(article.records, searchQuery)
 
     fun settleCard() {
         scope.launch {
@@ -2106,7 +2153,7 @@ private fun ArticleCard(
                 Row(verticalAlignment = Alignment.Top) {
                     Column(Modifier.weight(1f)) {
                         Text(
-                            text = article.title,
+                            text = highlightSearchMatches(article.title, searchQuery),
                             fontWeight = FontWeight.Bold,
                             fontSize = if (compact) 14.sp else 16.sp,
                             maxLines = 2,
@@ -2124,6 +2171,16 @@ private fun ArticleCard(
                         )
                     }
                 }
+                if (searchPreview != null) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = highlightSearchMatches("“$searchPreview”", searchQuery),
+                        color = Muted,
+                        fontSize = if (compact) 11.sp else 12.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
                 Spacer(Modifier.height(if (compact) 7.dp else 9.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Surface(color = Color(0xFFF4E7D4), shape = RoundedCornerShape(8.dp)) {
@@ -2137,7 +2194,10 @@ private fun ArticleCard(
                     Spacer(Modifier.width(8.dp))
                     if (article.tags.isNotEmpty()) {
                         Text(
-                            text = article.tags.joinToString("  ") { "#$it" },
+                            text = highlightSearchMatches(
+                                article.tags.joinToString("  ") { "#$it" },
+                                searchQuery,
+                            ),
                             color = Muted,
                             fontSize = 12.sp,
                             maxLines = 1,
