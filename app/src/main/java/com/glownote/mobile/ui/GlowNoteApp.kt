@@ -293,6 +293,7 @@ private fun ChromeBrowserScreen(state: GlowNoteUiState, viewModel: GlowNoteViewM
     var clearSelectionRequest by remember { mutableStateOf(0) }
     var readerModeRequest by remember { mutableStateOf(0) }
     var goBackRequest by remember { mutableStateOf(0) }
+    var previewCaptureRequest by remember { mutableStateOf(0) }
     var activeWebViewCanGoBack by remember(state.activeBrowserTabId) { mutableStateOf(false) }
     val context = LocalContext.current
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -426,7 +427,10 @@ private fun ChromeBrowserScreen(state: GlowNoteUiState, viewModel: GlowNoteViewM
                 addressFocusRequester = addressFocusRequester,
                 onBack = goBackFromBrowser,
                 onNewTab = addTab,
-                onShowTabs = { showTabOverview = true },
+                onShowTabs = {
+                    previewCaptureRequest += 1
+                    showTabOverview = true
+                },
                 onMore = { showMoreMenu = true },
                 currentPageUrl = currentPageUrl,
                 currentPageTitle = currentPageTitle,
@@ -485,6 +489,7 @@ private fun ChromeBrowserScreen(state: GlowNoteUiState, viewModel: GlowNoteViewM
                                 readerModeRequest = readerModeRequest,
                                 readerSettings = state.settings.reader,
                                 goBackRequest = goBackRequest,
+                                previewCaptureRequest = previewCaptureRequest,
                                 scrollToHighlightRequest = state.pendingHighlightJump,
                                 onLoaded = { loadedTabId, url, title ->
                                     if (loadedTabId == state.activeBrowserTabId) address = url
@@ -1083,8 +1088,8 @@ private fun BrowserTabOverview(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(58.dp)
-                        .clip(RoundedCornerShape(17.dp))
                         .clickable(onClick = onNewTab),
+                    shape = RoundedCornerShape(17.dp),
                     color = Color.Transparent,
                     border = BorderStroke(1.dp, Color(0xFFD7CFC1)),
                 ) {
@@ -1113,12 +1118,13 @@ private fun BrowserTabCard(
     onSelect: () -> Unit,
     onClose: () -> Unit,
 ) {
+    val shape = RoundedCornerShape(18.dp)
     Surface(
         modifier = modifier
             .fillMaxWidth()
             .height(278.dp)
-            .clip(RoundedCornerShape(18.dp))
             .clickable(onClick = onSelect),
+        shape = shape,
         color = if (isActive) Color(0xFFE8F0F8) else Color(0xFFE8E8DF),
         border = BorderStroke(
             width = if (isActive) 2.dp else 1.dp,
@@ -2993,6 +2999,33 @@ private fun captureWebPreview(view: WebView): Bitmap? {
     }.getOrNull()
 }
 
+private fun scheduleWebPreviewCapture(
+    view: WebView,
+    tabId: String,
+    onCaptured: (String, Bitmap) -> Unit,
+    attempt: Int = 0,
+) {
+    val delayMs = when (attempt) {
+        0 -> 220L
+        1 -> 420L
+        2 -> 800L
+        else -> 1200L
+    }
+    view.postDelayed(
+        {
+            if (view.isAttachedToWindow) {
+                val preview = captureWebPreview(view)
+                if (preview != null) {
+                    onCaptured(tabId, preview)
+                } else if (attempt < 3) {
+                    scheduleWebPreviewCapture(view, tabId, onCaptured, attempt + 1)
+                }
+            }
+        },
+        delayMs,
+    )
+}
+
 @Composable
 private fun WebPageView(
     tabId: String,
@@ -3014,6 +3047,7 @@ private fun WebPageView(
     onOpenNewWindow: (String) -> Unit,
     onNavigationStateChanged: (String, Boolean) -> Unit,
     onPreviewCaptured: (String, Bitmap) -> Unit = { _, _ -> },
+    previewCaptureRequest: Int = 0,
 ) {
     val latestSelection = rememberUpdatedState(onSelection)
     val latestHighlightClick = rememberUpdatedState(onHighlightClick)
@@ -3030,6 +3064,7 @@ private fun WebPageView(
     var lastClearSelectionRequest by remember { mutableStateOf(clearSelectionRequest) }
     var lastReaderModeRequest by remember { mutableStateOf(readerModeRequest) }
     var lastGoBackRequest by remember { mutableStateOf(goBackRequest) }
+    var lastPreviewCaptureRequest by remember { mutableStateOf(previewCaptureRequest) }
     var lastScrollToHighlightToken by remember { mutableStateOf<Long?>(null) }
     var lastAppliedRecords by remember { mutableStateOf<List<HighlightRecord>?>(null) }
     var lastAppliedReaderSettings by remember { mutableStateOf<ReaderSettings?>(null) }
@@ -3038,7 +3073,7 @@ private fun WebPageView(
         modifier = Modifier.fillMaxSize(),
         factory = { context ->
             AnnotationWebView(context).apply {
-                visibility = if (isActive) View.VISIBLE else View.GONE
+                visibility = if (isActive) View.VISIBLE else View.INVISIBLE
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
                 settings.allowFileAccess = false
@@ -3063,6 +3098,15 @@ private fun WebPageView(
                 settings.javaScriptCanOpenWindowsAutomatically = true
                 settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
                 webChromeClient = object : WebChromeClient() {
+                    override fun onReceivedTitle(view: WebView, title: String) {
+                        super.onReceivedTitle(view, title)
+                        val pageUrl = view.url.orEmpty()
+                        if (pageUrl.isNotBlank() && pageUrl != "about:blank") {
+                            latestLoaded.value(tabId, pageUrl, title)
+                            scheduleWebPreviewCapture(view, tabId, latestPreviewCaptured.value)
+                        }
+                    }
+
                     override fun onCreateWindow(
                         view: WebView,
                         isDialog: Boolean,
@@ -3182,14 +3226,6 @@ private fun WebPageView(
                     "AndroidWebViewBridge",
                 )
                 webViewClient = object : WebViewClient() {
-                    fun schedulePreviewCapture(view: WebView) {
-                        view.postDelayed({
-                            captureWebPreview(view)?.let { preview ->
-                                latestPreviewCaptured.value(tabId, preview)
-                            }
-                        }, 280L)
-                    }
-
                     override fun shouldOverrideUrlLoading(
                         view: WebView,
                         request: WebResourceRequest,
@@ -3248,7 +3284,7 @@ private fun WebPageView(
                         lastAppliedRecords = currentRecords
                         latestNavigationStateChanged.value(tabId, view.canGoBack())
                         latestLoaded.value(tabId, pageUrl, view.title.orEmpty())
-                        schedulePreviewCapture(view)
+                        scheduleWebPreviewCapture(view, tabId, latestPreviewCaptured.value)
                     }
 
                     override fun doUpdateVisitedHistory(
@@ -3269,7 +3305,7 @@ private fun WebPageView(
                         // that flag is intentionally true while that restore
                         // is in flight.
                         latestLoaded.value(tabId, pageUrl, view.title.orEmpty())
-                        schedulePreviewCapture(view)
+                        scheduleWebPreviewCapture(view, tabId, latestPreviewCaptured.value)
                     }
 
                     override fun onReceivedError(
@@ -3289,7 +3325,7 @@ private fun WebPageView(
             }
         },
         update = { view ->
-            view.visibility = if (isActive) View.VISIBLE else View.GONE
+            view.visibility = if (isActive) View.VISIBLE else View.INVISIBLE
             if (isActive && clearSelectionRequest != lastClearSelectionRequest) {
                 view.evaluateJavascript(AnnotationScript.clearSelection(), null)
                 lastClearSelectionRequest = clearSelectionRequest
@@ -3306,6 +3342,10 @@ private fun WebPageView(
                     view.goBack()
                 }
                 lastGoBackRequest = goBackRequest
+            }
+            if (previewCaptureRequest != lastPreviewCaptureRequest) {
+                scheduleWebPreviewCapture(view, tabId, latestPreviewCaptured.value)
+                lastPreviewCaptureRequest = previewCaptureRequest
             }
             latestNavigationStateChanged.value(tabId, view.canGoBack())
             val currentUrl = view.url.orEmpty()

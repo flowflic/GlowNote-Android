@@ -165,7 +165,7 @@ class GlowNoteViewModel(application: Application) : AndroidViewModel(application
                 it.browserTabs.map { tab ->
                     if (tab.id == activeId) tab.copy(
                         url = safe,
-                        title = title,
+                        title = title.ifBlank { tab.title },
                         isNewTab = false,
                         isReaderMode = keepReaderMode,
                     ) else tab
