@@ -52,6 +52,17 @@ class AnnotationScriptTest {
     }
 
     @Test
+    fun readerModeUnwrapsGlowNoteMarksBeforeSanitizingAttributes() {
+        val script = AnnotationScript.toggleReaderMode
+        val unwrapped = script.indexOf("unwrapMarks(clone);")
+        val sanitized = script.indexOf("var elements = clone.querySelectorAll('*');")
+
+        assertTrue(unwrapped >= 0)
+        assertTrue(sanitized >= 0)
+        assertTrue(unwrapped < sanitized)
+    }
+
+    @Test
     fun readerModeOwnsItsSettingsMenu() {
         val script = AnnotationScript.toggleReaderMode + AnnotationScript.bootstrap
 

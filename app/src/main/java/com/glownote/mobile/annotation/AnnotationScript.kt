@@ -939,6 +939,11 @@ object AnnotationScript {
           }
 
           function cleanClone(clone) {
+            // Remove GlowNote marks before sanitizing attributes. The
+            // sanitizer removes data-glownote-id, which would otherwise
+            // leave a native <mark> behind with the browser's bright-yellow
+            // default background in reading mode.
+            unwrapMarks(clone);
             var removable = clone.querySelectorAll(
               'script,style,link,noscript,iframe,canvas,svg,form,nav,aside,button,input,select,textarea'
             );
@@ -982,7 +987,6 @@ object AnnotationScript {
                 }
               }
             }
-            unwrapMarks(clone);
           }
 
           function enterReaderMode() {
