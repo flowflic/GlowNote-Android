@@ -83,6 +83,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.History
@@ -93,6 +94,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
@@ -103,6 +105,8 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -200,6 +204,11 @@ private val SearchMatchBackground = Color(0xFFFFD54F)
 
 private const val TAB_PREVIEW_WIDTH_PX = 600
 private const val TAB_PREVIEW_HEIGHT_PX = 760
+
+private enum class ArticleSortOrder(val label: String) {
+    RECENT("按最近批注时间"),
+    TITLE("按标题首字母"),
+}
 
 private fun highlightSearchMatches(text: String, query: String): AnnotatedString {
     val normalizedQuery = query.trim().removePrefix("#").trim()
@@ -446,16 +455,6 @@ private fun ChromeBrowserScreen(state: GlowNoteUiState, viewModel: GlowNoteViewM
                 tabCount = state.browserTabs.size,
                 showAddressField = !isNewTab,
             )
-            if (state.status.isNotBlank() && !isSyncStatusMessage(state.status)) {
-                Text(
-                    state.status,
-                    color = if (state.statusIsError) Color(0xFFB3261E) else Muted,
-                    fontSize = 12.sp,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
             Box(Modifier.fillMaxSize()) {
                 state.browserTabs.forEach { tab ->
                     key(tab.id, tab.isNewTab) {
@@ -529,8 +528,12 @@ private fun ChromeBrowserScreen(state: GlowNoteUiState, viewModel: GlowNoteViewM
                         AnnotationPanel(
                             draft = draft,
                             onSave = { color, note, tagInput ->
-                                clearPageSelection()
-                                viewModel.saveDraft(color, note, tagInput)
+                                viewModel.saveDraft(
+                                    color = color,
+                                    note = note,
+                                    tagInput = tagInput,
+                                    onSaved = clearPageSelection,
+                                )
                             },
                             onDelete = if (draft.id == null) null else {
                                 {
@@ -546,8 +549,12 @@ private fun ChromeBrowserScreen(state: GlowNoteUiState, viewModel: GlowNoteViewM
                             selectionBottom = draft.selectionBottom,
                             selectedColor = draft.id?.let { draft.color },
                             onHighlight = { color ->
-                                clearPageSelection()
-                                viewModel.saveDraft(color, draft.note, draft.tagInput)
+                                viewModel.saveDraft(
+                                    color = color,
+                                    note = draft.note,
+                                    tagInput = draft.tagInput,
+                                    onSaved = clearPageSelection,
+                                )
                             },
                             onAnnotate = { showAnnotationPanel = true },
                             onDelete = if (draft.id == null) null else {
@@ -1554,6 +1561,8 @@ private fun GlowNoteNavigation(screen: AppScreen, onNavigate: (AppScreen) -> Uni
 private fun LibraryScreen(state: GlowNoteUiState, viewModel: GlowNoteViewModel) {
     var showSearch by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
+    var articleSortOrder by remember { mutableStateOf(ArticleSortOrder.RECENT) }
+    var selectedTag by remember { mutableStateOf<String?>(null) }
     val searchFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
 
@@ -1570,12 +1579,48 @@ private fun LibraryScreen(state: GlowNoteUiState, viewModel: GlowNoteViewModel) 
     }
 
     val searchQuery = query.trim().removePrefix("#").trim()
-    val visibleArticles = if (searchQuery.isBlank()) {
+    val availableTags = remember(state.records) {
+        state.records
+            .flatMap { it.tags + it.noteTags }
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .distinctBy { it.lowercase() }
+            .sortedWith(compareBy { it.lowercase() })
+    }
+    LaunchedEffect(availableTags) {
+        if (selectedTag != null && availableTags.none { it.equals(selectedTag, ignoreCase = true) }) {
+            selectedTag = null
+        }
+    }
+
+    val searchFilteredArticles = if (searchQuery.isBlank()) {
         state.articles
     } else {
         state.articles.mapNotNull { it.filterBySearchQuery(searchQuery) }
     }
+    val tagFilteredArticles = searchFilteredArticles.filter { article ->
+        selectedTag == null || article.records.any { record ->
+            (record.tags + record.noteTags).any { tag -> tag.equals(selectedTag, ignoreCase = true) }
+        }
+    }
+    val visibleArticles = when (articleSortOrder) {
+        ArticleSortOrder.RECENT -> tagFilteredArticles.sortedWith(
+            compareByDescending<ArticleGroup> { it.latest }
+                .thenBy { it.title.lowercase() },
+        )
+        ArticleSortOrder.TITLE -> tagFilteredArticles.sortedWith(
+            compareBy<ArticleGroup> { it.title.trim().ifBlank { it.url }.lowercase() }
+                .thenBy { it.key },
+        )
+    }
     val matchingRecordCount = visibleArticles.sumOf { it.records.size }
+    val hasArticleFilter = searchQuery.isNotBlank() || selectedTag != null
+    val emptyFilterMessage = when {
+        searchQuery.isNotBlank() && selectedTag != null ->
+            "没有找到同时符合搜索和标签 #$selectedTag 的文章"
+        selectedTag != null -> "没有找到带有标签 #$selectedTag 的文章"
+        else -> "没有找到与“${query.trim()}”匹配的高亮、批注或标签"
+    }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         if (maxWidth >= 600.dp) {
@@ -1590,6 +1635,13 @@ private fun LibraryScreen(state: GlowNoteUiState, viewModel: GlowNoteViewModel) 
                 onQueryChange = { query = it },
                 onToggleSearch = { if (showSearch) closeSearch() else showSearch = true },
                 searchFocusRequester = searchFocusRequester,
+                sortOrder = articleSortOrder,
+                selectedTag = selectedTag,
+                availableTags = availableTags,
+                onSortOrderChange = { articleSortOrder = it },
+                onTagChange = { selectedTag = it },
+                hasArticleFilter = hasArticleFilter,
+                emptyFilterMessage = emptyFilterMessage,
             )
         } else {
             Column(
@@ -1665,14 +1717,24 @@ private fun LibraryScreen(state: GlowNoteUiState, viewModel: GlowNoteViewModel) 
         Spacer(Modifier.height(20.dp))
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Text("文章列表", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            if (searchQuery.isNotBlank()) {
+            if (hasArticleFilter) {
                 Spacer(Modifier.weight(1f))
                 Text(
                     text = "${visibleArticles.size} 篇 · $matchingRecordCount 条命中",
                     color = MaterialTheme.colorScheme.primary,
                     fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
+            if (!hasArticleFilter) Spacer(Modifier.weight(1f))
+            ArticleListActions(
+                sortOrder = articleSortOrder,
+                selectedTag = selectedTag,
+                availableTags = availableTags,
+                onSortOrderChange = { articleSortOrder = it },
+                onTagChange = { selectedTag = it },
+            )
         }
 
         if (state.status.isNotBlank() && !isSyncStatusMessage(state.status)) {
@@ -1682,7 +1744,7 @@ private fun LibraryScreen(state: GlowNoteUiState, viewModel: GlowNoteViewModel) 
         Spacer(Modifier.height(10.dp))
         if (state.articles.isEmpty()) {
             EmptyLibraryCard { viewModel.navigateTo(AppScreen.BROWSER) }
-        } else if (searchQuery.isNotBlank() && visibleArticles.isEmpty()) {
+        } else if (hasArticleFilter && visibleArticles.isEmpty()) {
             Card(
                 colors = CardDefaults.cardColors(containerColor = Paper),
                 border = BorderStroke(1.dp, Color(0xFFE6DED1)),
@@ -1690,7 +1752,7 @@ private fun LibraryScreen(state: GlowNoteUiState, viewModel: GlowNoteViewModel) 
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(
-                    text = "没有找到与“${query.trim()}”匹配的高亮、批注或标签",
+                    text = emptyFilterMessage,
                     color = Muted,
                     fontSize = 14.sp,
                     modifier = Modifier.padding(horizontal = 18.dp, vertical = 20.dp),
@@ -1716,6 +1778,113 @@ private fun LibraryScreen(state: GlowNoteUiState, viewModel: GlowNoteViewModel) 
 }
 
 @Composable
+private fun ArticleListActions(
+    sortOrder: ArticleSortOrder,
+    selectedTag: String?,
+    availableTags: List<String>,
+    onSortOrderChange: (ArticleSortOrder) -> Unit,
+    onTagChange: (String?) -> Unit,
+) {
+    var showSortMenu by remember { mutableStateOf(false) }
+    var showTagMenu by remember { mutableStateOf(false) }
+
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box {
+            IconButton(
+                onClick = {
+                    showTagMenu = false
+                    showSortMenu = true
+                },
+                modifier = Modifier.size(40.dp),
+            ) {
+                Icon(
+                    Icons.Default.Sort,
+                    contentDescription = "排序文章",
+                    tint = Ink,
+                    modifier = Modifier.size(21.dp),
+                )
+            }
+            DropdownMenu(
+                expanded = showSortMenu,
+                onDismissRequest = { showSortMenu = false },
+                containerColor = Paper,
+                tonalElevation = 0.dp,
+            ) {
+                ArticleSortOrder.values().forEach { option ->
+                    DropdownMenuItem(
+                        text = { Text(option.label) },
+                        onClick = {
+                            onSortOrderChange(option)
+                            showSortMenu = false
+                        },
+                        trailingIcon = if (sortOrder == option) {
+                            { Icon(Icons.Default.Check, contentDescription = null) }
+                        } else null,
+                    )
+                }
+            }
+        }
+        Box {
+            IconButton(
+                onClick = {
+                    showSortMenu = false
+                    showTagMenu = true
+                },
+                modifier = Modifier.size(40.dp),
+            ) {
+                Icon(
+                    Icons.Default.FilterList,
+                    contentDescription = selectedTag?.let { "筛选文章：#$it" } ?: "筛选文章",
+                    tint = if (selectedTag == null) Ink else MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(21.dp),
+                )
+            }
+            DropdownMenu(
+                expanded = showTagMenu,
+                onDismissRequest = { showTagMenu = false },
+                // Keep the menu below the trigger on phones with many tags;
+                // the menu itself remains scrollable instead of growing
+                // upward over the dashboard.
+                modifier = Modifier.heightIn(max = 280.dp),
+                containerColor = Paper,
+                tonalElevation = 0.dp,
+            ) {
+                DropdownMenuItem(
+                    text = { Text("全部标签") },
+                    onClick = {
+                        onTagChange(null)
+                        showTagMenu = false
+                    },
+                    trailingIcon = if (selectedTag == null) {
+                        { Icon(Icons.Default.Check, contentDescription = null) }
+                    } else null,
+                )
+                if (availableTags.isEmpty()) {
+                    DropdownMenuItem(
+                        text = { Text("暂无可用标签", color = Muted) },
+                        onClick = {},
+                        enabled = false,
+                    )
+                } else {
+                    availableTags.forEach { tag ->
+                        DropdownMenuItem(
+                            text = { Text("#$tag") },
+                            onClick = {
+                                onTagChange(tag)
+                                showTagMenu = false
+                            },
+                            trailingIcon = if (selectedTag?.equals(tag, ignoreCase = true) == true) {
+                                { Icon(Icons.Default.Check, contentDescription = null) }
+                            } else null,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun TabletLibraryLayout(
     state: GlowNoteUiState,
     viewModel: GlowNoteViewModel,
@@ -1727,6 +1896,13 @@ private fun TabletLibraryLayout(
     onQueryChange: (String) -> Unit,
     onToggleSearch: () -> Unit,
     searchFocusRequester: FocusRequester,
+    sortOrder: ArticleSortOrder,
+    selectedTag: String?,
+    availableTags: List<String>,
+    onSortOrderChange: (ArticleSortOrder) -> Unit,
+    onTagChange: (String?) -> Unit,
+    hasArticleFilter: Boolean,
+    emptyFilterMessage: String,
 ) {
     val keyboardController = LocalSoftwareKeyboardController.current
     val selectedArticle = visibleArticles.firstOrNull { it.key == state.selectedArticleKey }
@@ -1825,7 +2001,7 @@ private fun TabletLibraryLayout(
                         Text("文章列表", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Ink)
                         Spacer(Modifier.weight(1f))
                         Text(
-                            text = if (searchQuery.isBlank()) {
+                            text = if (!hasArticleFilter) {
                                 "${visibleArticles.size} 篇"
                             } else {
                                 "${visibleArticles.size} 篇 · $matchingRecordCount 条命中"
@@ -1834,6 +2010,13 @@ private fun TabletLibraryLayout(
                             fontSize = 12.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
+                        )
+                        ArticleListActions(
+                            sortOrder = sortOrder,
+                            selectedTag = selectedTag,
+                            availableTags = availableTags,
+                            onSortOrderChange = onSortOrderChange,
+                            onTagChange = onTagChange,
                         )
                     }
                     Divider(color = Color(0xFFE6DED1))
@@ -1845,9 +2028,9 @@ private fun TabletLibraryLayout(
                     ) {
                         when {
                             state.articles.isEmpty() -> EmptyLibraryCard { viewModel.navigateTo(AppScreen.BROWSER) }
-                            searchQuery.isNotBlank() && visibleArticles.isEmpty() -> {
+                            hasArticleFilter && visibleArticles.isEmpty() -> {
                                 Text(
-                                    text = "没有找到与“${query.trim()}”匹配的高亮、批注或标签",
+                                    text = emptyFilterMessage,
                                     color = Muted,
                                     fontSize = 14.sp,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 12.dp),
@@ -2410,7 +2593,13 @@ private fun ArticleDetailPane(
                     onNext = if (currentIndex in 0 until article.records.lastIndex) {
                         { viewModel.editHighlight(article.records[currentIndex + 1]) }
                     } else null,
-                    onSave = { color, note, tagInput -> viewModel.saveDraft(color, note, tagInput) },
+                    onSave = { color, note, tagInput ->
+                        viewModel.saveDraft(
+                            color = color,
+                            note = note,
+                            tagInput = tagInput,
+                        )
+                    },
                     onDelete = draft.id?.let { id -> { viewModel.deleteHighlight(id) } },
                     onCopy = { copyHighlightText(context, draft.selectedText) },
                 )
@@ -2882,16 +3071,6 @@ private fun BrowserScreen(state: GlowNoteUiState, viewModel: GlowNoteViewModel) 
                 Icon(Icons.Default.Add, contentDescription = "新建标签页")
             }
         }
-        if (state.status.isNotBlank() && !isSyncStatusMessage(state.status)) {
-            Text(
-                state.status,
-                color = if (state.statusIsError) Color(0xFFB3261E) else Muted,
-                fontSize = 12.sp,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
         Box(Modifier.fillMaxSize()) {
             state.browserTabs.forEach { tab ->
                 key(tab.id) {
@@ -2936,8 +3115,12 @@ private fun BrowserScreen(state: GlowNoteUiState, viewModel: GlowNoteViewModel) 
                     AnnotationPanel(
                         draft = draft,
                         onSave = { color, note, tagInput ->
-                            clearPageSelection()
-                            viewModel.saveDraft(color, note, tagInput)
+                            viewModel.saveDraft(
+                                color = color,
+                                note = note,
+                                tagInput = tagInput,
+                                onSaved = clearPageSelection,
+                            )
                         },
                         onDelete = if (draft.id == null) null else {
                             {
@@ -2953,8 +3136,12 @@ private fun BrowserScreen(state: GlowNoteUiState, viewModel: GlowNoteViewModel) 
                         selectionBottom = draft.selectionBottom,
                         selectedColor = draft.id?.let { draft.color },
                         onHighlight = { color ->
-                            clearPageSelection()
-                            viewModel.saveDraft(color, draft.note, draft.tagInput)
+                            viewModel.saveDraft(
+                                color = color,
+                                note = draft.note,
+                                tagInput = draft.tagInput,
+                                onSaved = clearPageSelection,
+                            )
                         },
                         onAnnotate = { showAnnotationPanel = true },
                         onDelete = if (draft.id == null) null else {
@@ -3326,10 +3513,6 @@ private fun WebPageView(
         },
         update = { view ->
             view.visibility = if (isActive) View.VISIBLE else View.INVISIBLE
-            if (isActive && clearSelectionRequest != lastClearSelectionRequest) {
-                view.evaluateJavascript(AnnotationScript.clearSelection(), null)
-                lastClearSelectionRequest = clearSelectionRequest
-            }
             if (!isActive) {
                 lastReaderModeRequest = readerModeRequest
             } else if (readerModeRequest != lastReaderModeRequest) {
@@ -3377,6 +3560,15 @@ private fun WebPageView(
                 view.evaluateJavascript(AnnotationScript.apply(records), null)
                 lastAppliedRecords = records
             }
+            // When a new highlight is saved, the records update and the
+            // selection-clear request arrive together. Queue the DOM mark
+            // first so the selection never exposes an unhighlighted frame.
+            // Keep the selection alive until this point; the custom
+            // ActionMode wrapper above still allows WebView text selection.
+            if (isActive && clearSelectionRequest != lastClearSelectionRequest) {
+                view.evaluateJavascript(AnnotationScript.clearSelection(), null)
+                lastClearSelectionRequest = clearSelectionRequest
+            }
             val pendingJump = scrollToHighlightRequest
             if (isActive && pendingJump != null && pendingJump.token != lastScrollToHighlightToken) {
                 view.evaluateJavascript(AnnotationScript.scrollToHighlight(pendingJump.id), null)
@@ -3394,14 +3586,15 @@ private fun WebPageView(
 /**
  * WebView's native selection ActionMode owns the floating Copy/Share/Search
  * toolbar. GlowNote uses the DOM selection reported by JavaScript instead, so
- * the native toolbar must not compete with the in-app annotation sheet.
+ * keep ActionMode alive for WebView's selection lifecycle while clearing and
+ * hiding its native menu before GlowNote's toolbar appears.
  */
 @Suppress("DEPRECATION")
 private class AnnotationWebView(context: Context) : WebView(context) {
     private companion object {
-        // Android's floating ActionMode only supports a bounded hide duration.
-        // Re-apply the hide before it expires while the WebView keeps the mode
-        // alive for its selection handles and range.
+        // Keep the selection mode alive so WebView retains the DOM selection,
+        // but keep its native floating toolbar hidden while GlowNote renders
+        // its own toolbar from the JavaScript selection callback.
         const val NATIVE_TOOLBAR_HIDE_MS = 3_000L
         const val NATIVE_TOOLBAR_REHIDE_MS = 2_500L
     }
@@ -3435,8 +3628,8 @@ private class AnnotationWebView(context: Context) : WebView(context) {
             override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
                 val created = callback.onCreateActionMode(mode, menu)
                 if (created) {
-                    // Keep WebView's ActionMode alive for selection, but remove
-                    // its Copy/Share/Search items from the visible menu.
+                    // Retain ActionMode for WebView's selection handles, but
+                    // remove Copy/Share/Search before the toolbar can expose it.
                     menu.clear()
                     hideNativeToolbar(mode)
                 }

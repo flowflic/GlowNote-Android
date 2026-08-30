@@ -513,11 +513,16 @@ class GlowNoteViewModel(application: Application) : AndroidViewModel(application
         _ui.update { it.copy(draft = null) }
     }
 
-    fun saveDraft(color: String, note: String, tagInput: String = "") {
+    fun saveDraft(
+        color: String,
+        note: String,
+        tagInput: String = "",
+        onSaved: () -> Unit = {},
+    ) {
         val draft = _ui.value.draft ?: return
         val tags = normalizeTags(tagInput.split(",").map { it.removePrefix("#") })
         viewModelScope.launch {
-            withContext(Dispatchers.IO) {
+            val savedRecord: HighlightRecord? = withContext(Dispatchers.IO) {
                 if (draft.id == null) {
                     repository.createHighlight(
                         url = draft.url,
@@ -532,7 +537,27 @@ class GlowNoteViewModel(application: Application) : AndroidViewModel(application
                     repository.updateHighlight(draft.id, color, note, tags)
                 }
             }
-            _ui.update { it.copy(draft = null, status = "批注已保存", statusIsError = false) }
+            _ui.update { state ->
+                val nextRecords = savedRecord?.let { saved ->
+                    val replaced = if (draft.id == null) {
+                        state.records + saved
+                    } else {
+                        state.records.map { record ->
+                            if (record.id == saved.id) saved else record
+                        }
+                    }
+                    replaced.sortedByDescending { it.updatedAt }
+                } ?: state.records
+                state.copy(
+                    records = nextRecords,
+                    articles = com.glownote.mobile.data.groupArticles(nextRecords),
+                    draft = null,
+                )
+            }
+            // The browser applies the new mark while the DOM selection is
+            // still alive, then clears the selection in this callback. This
+            // avoids the visible unhighlighted frame between the two steps.
+            onSaved()
             refreshInternal()
             if (_ui.value.settings.webdav.enabled) syncNow()
         }
@@ -545,7 +570,7 @@ class GlowNoteViewModel(application: Application) : AndroidViewModel(application
     fun deleteHighlight(id: String) {
         viewModelScope.launch {
             withContext(Dispatchers.IO) { repository.deleteHighlight(id) }
-            _ui.update { it.copy(draft = null, status = "批注已删除", statusIsError = false) }
+            _ui.update { it.copy(draft = null) }
             refreshInternal()
             if (_ui.value.settings.webdav.enabled) syncNow()
         }

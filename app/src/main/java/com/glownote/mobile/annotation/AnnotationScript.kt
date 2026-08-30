@@ -568,14 +568,11 @@ object AnnotationScript {
             return rangeForOffsets(start, end, info);
           }
 
-          function clearMarks() {
-            var marks = document.querySelectorAll('mark[data-glownote-id]');
-            for (var mark of marks) {
-              var parent = mark.parentNode;
-              if (!parent) continue;
-              while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
-              parent.removeChild(mark);
-            }
+          function removeMark(mark) {
+            if (!mark || !mark.parentNode) return;
+            var parent = mark.parentNode;
+            while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
+            parent.removeChild(mark);
           }
 
           function createMark(record) {
@@ -594,6 +591,13 @@ object AnnotationScript {
               notifyHighlightClick(event, mark);
             }, true);
             return mark;
+          }
+
+          function updateMark(mark, record) {
+            if (!mark || !record) return;
+            mark.setAttribute('title', record.note || 'GlowNote highlight');
+            mark.style.backgroundColor = colorOf(record.color);
+            mark.style.color = '#17202a';
           }
 
           function wrapRange(range, record) {
@@ -628,15 +632,41 @@ object AnnotationScript {
           }
 
           window.__glownoteApply = function (records) {
+            // Do not unwrap every mark before applying the new snapshot. That
+            // creates a visible unhighlighted frame and forces the whole page
+            // to reflow whenever one highlight is created or edited. Keep
+            // existing marks in place and only touch records that changed.
             window.__glownoteRecords = Array.isArray(records) ? records : [];
-            clearMarks();
+            var nextById = Object.create(null);
             for (var record of window.__glownoteRecords) {
-              if (!record || !record.selectedText) continue;
-              var preferredOffset = record.anchor && Number(record.anchor.textOffset);
-              wrapRange(
-                findRange(record.selectedText, isFinite(preferredOffset) ? preferredOffset : -1),
-                record
+              if (record && record.id) nextById[String(record.id)] = record;
+            }
+
+            var existingIds = Object.create(null);
+            var currentMarks = document.querySelectorAll('mark[data-glownote-id]');
+            for (var currentMark of currentMarks) {
+              var currentId = String(currentMark.getAttribute('data-glownote-id') || '');
+              var currentRecord = nextById[currentId];
+              if (!currentRecord) {
+                removeMark(currentMark);
+                continue;
+              }
+              existingIds[currentId] = true;
+              updateMark(currentMark, currentRecord);
+            }
+
+            for (var nextRecord of window.__glownoteRecords) {
+              if (!nextRecord || !nextRecord.id || !nextRecord.selectedText) continue;
+              var nextId = String(nextRecord.id);
+              if (existingIds[nextId]) continue;
+              var preferredOffset = nextRecord.anchor && Number(nextRecord.anchor.textOffset);
+              var nextRange = findRange(
+                nextRecord.selectedText,
+                isFinite(preferredOffset) ? preferredOffset : -1
               );
+              if (!nextRange) continue;
+              wrapRange(nextRange, nextRecord);
+              existingIds[nextId] = true;
             }
           };
 

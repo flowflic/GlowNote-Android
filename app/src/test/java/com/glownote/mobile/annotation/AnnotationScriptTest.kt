@@ -63,6 +63,18 @@ class AnnotationScriptTest {
     }
 
     @Test
+    fun applyingHighlightsDoesNotClearAndRebuildTheWholePage() {
+        val script = AnnotationScript.bootstrap
+
+        assertTrue(script.contains("function removeMark(mark)"))
+        assertTrue(script.contains("function updateMark(mark, record)"))
+        assertTrue(script.contains("var nextById = Object.create(null);"))
+        assertTrue(script.contains("var existingIds = Object.create(null);"))
+        assertTrue(script.contains("updateMark(currentMark, currentRecord);"))
+        assertTrue(!script.contains("clearMarks();"))
+    }
+
+    @Test
     fun readerModeOwnsItsSettingsMenu() {
         val script = AnnotationScript.toggleReaderMode + AnnotationScript.bootstrap
 
